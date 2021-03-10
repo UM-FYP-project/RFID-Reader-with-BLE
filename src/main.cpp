@@ -16,7 +16,9 @@ UART Reader_uart(digitalPinToPinName(3), digitalPinToPinName(2), NC, NC); // TX,
 unsigned long previousMillis = 0;
 int read_buffer_flag = 0;
 int read_buffer_counted = 0;
-int reset_flag = false;
+bool reset_flag = false;
+bool isCentralConnected = false; 
+byte tags[6][50] = {{},{},{},{},{},{}}; //{{[A0][total_len][FE][EPC_len][PC+EPC+CRC][RSSI][DataLen][X+Y+Near],}}
 // reader Enable Pin
 int reader_enable_pin = 4;
 BLEService INDNAV_BLE(service_uuid);
@@ -77,13 +79,14 @@ int data_from_reader(byte reader_feedback[], int tagscount){
   int count_flag = false;
   unsigned long currentMillis;
   Serial.print("****Cmd from Read**** Count:");
-  Serial.println(count);
+  Serial.print(count);
+  Serial.print("\n");
   while(count){
     currentMillis = millis();
     if (currentMillis - previousMillis >= 5){
       while(Reader_uart.available() > 0){
         reader_feedback[index] = Reader_uart.read();
-        String str = (reader_feedback[index] > 16) ? "0x" : "0x0";
+        String str = (reader_feedback[index] >= 16) ? "0x" : "0x0";
         Serial.print(str);
         Serial.print(reader_feedback[index], HEX);
         Serial.print(" ");
@@ -111,11 +114,10 @@ int data_from_reader(byte reader_feedback[], int tagscount){
     }
   }
   Serial.print("\n");
-  Serial.println("----------------------------------------------------------------");
   return index;
 }
 
-void array2array2D(byte reader_feedback[], byte reader_feedback_2d[6][40], int len){
+int array2array2D(byte reader_feedback[], byte reader_feedback_2d[6][50], int len){
   unsigned long currentMillis;
   int x_2d = 0;
   int y_2d = 0;
@@ -142,7 +144,7 @@ void array2array2D(byte reader_feedback[], byte reader_feedback_2d[6][40], int l
     Serial.print(count);
     Serial.print("|");
     for (int y = 0; y < y_2d; y++){
-      String str = (reader_feedback_2d[count][y] > 16) ? "0x" : "0x0";
+      String str = (reader_feedback_2d[count][y] >= 16) ? "0x" : "0x0";
       Serial.print(str);
       Serial.print(reader_feedback_2d[count][y], HEX);
       Serial.print(" ");
@@ -153,7 +155,106 @@ void array2array2D(byte reader_feedback[], byte reader_feedback_2d[6][40], int l
     }
   }
   Serial.print("\n");
+  return count;
+}
+
+void array2DtoTags(byte reader_feedback_2D[6][50], int Array2dcount){
   Serial.println("----------------------------------------------------------------");
+  Serial.println("****************Array2DtoTags****************");
+  for (int index = 0; index < Array2dcount; index++){
+    Serial.print("Array_");Serial.print(index);Serial.print("| ");
+    for (int i = 0; i < reader_feedback_2D[index][1] + 2; i++) {
+      String str = (reader_feedback_2D[index][i] >= 16) ? "0x" : "0x0";
+      Serial.print(str);
+      Serial.print(reader_feedback_2D[index][i], HEX);
+      Serial.print(" ");
+    }
+    Serial.print("\n");
+    if (reader_feedback_2D[index][3] ==(byte)0x90 && reader_feedback_2D[index][1] > 4){
+      byte EPC_Len = (byte)reader_feedback_2D[index][6];
+      byte arrayLen = (byte)(EPC_Len + 4);
+      byte rssi = (byte)reader_feedback_2D[index][EPC_Len + 7];
+      tags[index][0] = (byte)0xA0;
+      tags[index][1] = (byte)arrayLen;
+      tags[index][2] = (byte)0xFE;
+      tags[index][3] = (byte)EPC_Len;
+      for (int i = 0; i < EPC_Len; i++){
+        tags[index][i + 4] = reader_feedback_2D[index][i + 7];
+      }
+      tags[index][arrayLen] = rssi;
+      Serial.print("Tags(0x90)_");Serial.print(index);Serial.print("| ");
+      for (int i = 0; i <= arrayLen; i++){
+        String str = (tags[index][i] >= 16) ? "0x" : "0x0";
+        Serial.print(str);
+        Serial.print(tags[index][i], HEX);
+        Serial.print(" ");
+      }
+      Serial.print("RSSI:");Serial.print(rssi,HEX);
+      Serial.print("\n");
+    }
+    else if (reader_feedback_2D[index][3] ==(byte)0x81 && reader_feedback_2D[index][1] > 4){
+      byte EPCnData_Len = reader_feedback_2D[index][6];
+      byte Data_Len = (byte)reader_feedback_2D[index][reader_feedback_2D[index][1] - 2];
+      byte EPC_Len = (byte)(EPCnData_Len - Data_Len);
+      byte tag[50] = {};
+      // Serial.print("EPCnData_Len:");Serial.print(EPCnData_Len);Serial.print("|");
+      // Serial.print("EPC_Len:");Serial.print(EPC_Len);Serial.print("|");
+      // Serial.print("Data_Len:");Serial.print(Data_Len);Serial.print("\n");
+      for (int x = 0; x < Array2dcount; x++){
+        if (EPC_Len == tags[x][3]){
+          int epcmatchCounter = 0;
+          for(int y = 0; y < EPC_Len; y++){
+            if (tags[x][4 + y] == reader_feedback_2D[index][7 + y])
+              epcmatchCounter += 1;
+          }
+          if (epcmatchCounter == EPC_Len) {
+            tags[x][EPC_Len + 5] = Data_Len;
+            tags[x][1] += Data_Len + 1;
+            for(int y = 0; y <= Data_Len; y++){
+              tags[x][EPC_Len + 6 + y] =  reader_feedback_2D[index][EPC_Len + 7 +y];
+            }
+            Serial.print("Tags(0x81)_");Serial.print(x);Serial.print("| ");
+            for (int i = 0; i <= tags[x][1]; i++){
+              String str = (tags[x][i] >= 16) ? "0x" : "0x0";
+              Serial.print(str);
+              Serial.print(tags[x][i], HEX);
+              Serial.print(" ");
+            }
+            Serial.print("\n");
+          }
+        }
+      }
+    }
+  }
+} 
+
+void cmdAction(byte cmd[],byte reader_feedback[300]){
+  int feedback_len = 0;
+  byte reader_feedback_2D[6][50] = {{},{},{},{},{},{}};
+  if (cmd[3] == (byte)0x90 || cmd[3] == (byte)0x81){
+    feedback_len = data_from_reader(reader_feedback, read_buffer_counted);
+  }
+  else if (cmd[3] == (byte)0x70){
+    feedback_len = data_from_reader(reader_feedback, 0);
+  }
+  else{
+    feedback_len = data_from_reader(reader_feedback, 1);
+  }
+  if ((reader_feedback[3] ==(byte)0x90 || reader_feedback[3] == (byte)0x81) && reader_feedback[1] > 4){
+    from_readerChar.writeValue(reader_feedback, feedback_len);
+    int Array2dcount = array2array2D(reader_feedback, reader_feedback_2D, feedback_len);
+    array2DtoTags(reader_feedback_2D, Array2dcount);
+  }
+  else {
+    from_readerChar.writeValue(reader_feedback, reader_feedback[1] + 2);
+  }
+  if (reader_feedback[3] == (byte)0x80 && reader_feedback[6] > 0 && reader_feedback[1] > 4){
+    read_buffer_flag = 1;
+    read_buffer_counted = (reader_feedback[5] * 100) + reader_feedback[6];
+  }
+  else if (reader_feedback[1] == 0x05 && reader_feedback[3] == (byte)0x92 && reader_feedback[5] > 0){
+    read_buffer_counted = (reader_feedback[4] * 100) + reader_feedback[5];
+  }
 }
 
 void cmd2reader(byte cmd[], long interval, int cmd_size){
@@ -162,14 +263,13 @@ void cmd2reader(byte cmd[], long interval, int cmd_size){
   int buffer_len = cmd[1] + 2;
   int flag = 0;
   byte reader_feedback[300] = {};
-  byte reader_feedback_2D[6][40] = {{},{},{},{},{},{}};
   if (cmd_size < buffer_len){
     cmd[cmd_size] = checksum(cmd, cmd_size);
   }
   Serial.println("----------------------------------------------------------------");
   Serial.println("****Send Cmd to Read****");
   for(int i = 0; i < buffer_len; i++){
-    String str = (reader_feedback[i] > 16) ? "0x" : "0x0";
+    String str = (reader_feedback[i] >= 16) ? "0x" : "0x0";
     Serial.print(str);
     Serial.print(cmd[i],HEX);
     Serial.print(" ");
@@ -179,6 +279,8 @@ void cmd2reader(byte cmd[], long interval, int cmd_size){
     if (flag == 0){
       Reader_uart.write(cmd, buffer_len);
       if (cmd[3] == (byte)0x70){
+        if (isCentralConnected)
+          from_readerChar.writeValue(byte(0x00));
         flag = 1;
         counter = 4;
       }
@@ -197,30 +299,7 @@ void cmd2reader(byte cmd[], long interval, int cmd_size){
       break;
     }
   }
-  int feedback_len = 0;
-  if (cmd[3] == (byte)0x90 || cmd[3] == (byte)0x81){
-    feedback_len = data_from_reader(reader_feedback, read_buffer_counted);
-  }
-  else if (cmd[3] == (byte)0x70){
-    feedback_len = data_from_reader(reader_feedback, 0);
-  }
-  else{
-    feedback_len = data_from_reader(reader_feedback, 1);
-  }
-  if (reader_feedback[3] ==(byte)0x90 || reader_feedback[3] == (byte)0x81){
-    from_readerChar.writeValue(reader_feedback, feedback_len);
-    array2array2D(reader_feedback, reader_feedback_2D, feedback_len);
-  }
-  else {
-    from_readerChar.writeValue(reader_feedback, reader_feedback[1] + 2);
-  }
-  if (reader_feedback[3] == (byte)0x80 && reader_feedback[6] > 0 && reader_feedback[1] > 4){
-    read_buffer_flag = 1;
-    read_buffer_counted = (reader_feedback[5] * 100) + reader_feedback[6];
-  }
-  else if (reader_feedback[1] == 0x05 && reader_feedback[3] == (byte)0x92 && reader_feedback[5] > 0){
-    read_buffer_counted = (reader_feedback[4] * 100) + reader_feedback[5];
-  }
+  cmdAction(cmd,reader_feedback);
 }
 
 void testing(int flag, int tags_counted){
@@ -283,8 +362,8 @@ void loop() {
   // if a central is connected to peripheral:
   if (central) {
     // Only send data if we are connected to a central device.
-    digitalWrite(LEDB, HIGH);
     if (central.connected()) {
+      isCentralConnected = true;
       digitalWrite(LEDB, HIGH);
       if (!reset_flag) {
         reset_flag = true;
@@ -296,34 +375,36 @@ void loop() {
       if (to_readerChar.written()) { // revice the comand through BLE
         byte length = to_readerChar.valueLength();
         to_readerChar.readValue(from_BLE, length);
-        switch (byte(from_BLE[3])){
-          case 0x70:
-            cmd2reader(from_BLE, 50, length);
-            from_readerChar.writeValue(byte(0x00));
-            break;
-          case 0x90:
-          case 0x92:
-            if (read_buffer_flag == 1){
-              cmd2reader(from_BLE, 300, length);
-            }
-            break;
-          //case 0x91:
-          case 0x93:
-            if (read_buffer_flag == 1){
-              cmd2reader(from_BLE, 300, length);
-            }
-            read_buffer_flag = 0;
-            read_buffer_counted = 0;
-            break;
-          default:
-            cmd2reader(from_BLE, 300, length);
-            break;
-        }
+        cmd2reader(from_BLE, 300, length);
+        // switch (byte(from_BLE[3])){
+        //   case 0x70:
+        //     cmd2reader(from_BLE, 50, length);
+        //     from_readerChar.writeValue(byte(0x00));
+        //     break;
+        //   case 0x90:
+        //   case 0x92:
+        //     if (read_buffer_flag == 1){
+        //       cmd2reader(from_BLE, 300, length);
+        //     }
+        //     break;
+        //   //case 0x91:
+        //   case 0x93:
+        //     if (read_buffer_flag == 1){
+        //       cmd2reader(from_BLE, 300, length);
+        //     }
+        //     read_buffer_flag = 0;
+        //     read_buffer_counted = 0;
+        //     break;
+        //   default:
+        //     cmd2reader(from_BLE, 300, length);
+        //     break;
+        // }
       }
     }
   }
   else { //BLE connection state 
     reset_flag = false;
+    isCentralConnected = false;
     digitalWrite(LEDB, HIGH);
     delay(100);
     digitalWrite(LEDB, LOW);
