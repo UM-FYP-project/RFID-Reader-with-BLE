@@ -197,9 +197,6 @@ void array2DtoTags(byte reader_feedback_2D[6][50], int Array2dcount){
       byte Data_Len = (byte)reader_feedback_2D[index][reader_feedback_2D[index][1] - 2];
       byte EPC_Len = (byte)(EPCnData_Len - Data_Len);
       byte tag[50] = {};
-      // Serial.print("EPCnData_Len:");Serial.print(EPCnData_Len);Serial.print("|");
-      // Serial.print("EPC_Len:");Serial.print(EPC_Len);Serial.print("|");
-      // Serial.print("Data_Len:");Serial.print(Data_Len);Serial.print("\n");
       for (int x = 0; x < Array2dcount; x++){
         if (EPC_Len == tags[x][3]){
           int epcmatchCounter = 0;
@@ -376,29 +373,6 @@ void loop() {
         byte length = to_readerChar.valueLength();
         to_readerChar.readValue(from_BLE, length);
         cmd2reader(from_BLE, 300, length);
-        // switch (byte(from_BLE[3])){
-        //   case 0x70:
-        //     cmd2reader(from_BLE, 50, length);
-        //     from_readerChar.writeValue(byte(0x00));
-        //     break;
-        //   case 0x90:
-        //   case 0x92:
-        //     if (read_buffer_flag == 1){
-        //       cmd2reader(from_BLE, 300, length);
-        //     }
-        //     break;
-        //   //case 0x91:
-        //   case 0x93:
-        //     if (read_buffer_flag == 1){
-        //       cmd2reader(from_BLE, 300, length);
-        //     }
-        //     read_buffer_flag = 0;
-        //     read_buffer_counted = 0;
-        //     break;
-        //   default:
-        //     cmd2reader(from_BLE, 300, length);
-        //     break;
-        // }
       }
     }
   }
