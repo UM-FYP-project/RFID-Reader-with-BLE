@@ -14,10 +14,13 @@ UART Reader_uart(digitalPinToPinName(3), digitalPinToPinName(2), NC, NC); // TX,
 
 //Global Var
 unsigned long previousMillis = 0;
-int read_buffer_flag = 0;
 int read_buffer_counted = 0;
 bool reset_flag = false;
 bool isCentralConnected = false; 
+int LEDBstate = LOW;
+int routin_counter = 0;
+unsigned long  routin_timer_1 = 0;
+unsigned long  routin_timer_2 = 0;
 byte tags[6][50] = {{},{},{},{},{},{}}; //{{[A0][total_len][FE][EPC_len][PC+EPC+CRC][RSSI][DataLen][X+Y+Near],}}
 // reader Enable Pin
 int reader_enable_pin = 4;
@@ -171,26 +174,32 @@ void array2DtoTags(byte reader_feedback_2D[6][50], int Array2dcount){
     }
     Serial.print("\n");
     if (reader_feedback_2D[index][3] ==(byte)0x90 && reader_feedback_2D[index][1] > 4){
+      bool isEPCexist = false;
       byte EPC_Len = (byte)reader_feedback_2D[index][6];
       byte arrayLen = (byte)(EPC_Len + 4);
       byte rssi = (byte)reader_feedback_2D[index][EPC_Len + 7];
-      tags[index][0] = (byte)0xA0;
-      tags[index][1] = (byte)arrayLen;
-      tags[index][2] = (byte)0xFE;
-      tags[index][3] = (byte)EPC_Len;
-      for (int i = 0; i < EPC_Len; i++){
-        tags[index][i + 4] = reader_feedback_2D[index][i + 7];
+      for (int x = 0; x < Array2dcount; x++){
+        isEPCexist = ((tags[x][tags[x][1] - 2] == reader_feedback_2D[index][EPC_Len + 6]) && (tags[x][tags[x][1] - 1] == reader_feedback_2D[index][EPC_Len + 7]));
       }
-      tags[index][arrayLen] = rssi;
-      Serial.print("Tags(0x90)_");Serial.print(index);Serial.print("| ");
-      for (int i = 0; i <= arrayLen; i++){
-        String str = (tags[index][i] >= 16) ? "0x" : "0x0";
-        Serial.print(str);
-        Serial.print(tags[index][i], HEX);
-        Serial.print(" ");
+      if (!isEPCexist) {
+        tags[index][0] = (byte)0xA0;
+        tags[index][1] = (byte)arrayLen;
+        tags[index][2] = (byte)0xFE;
+        tags[index][3] = (byte)EPC_Len;
+        for (int i = 0; i < EPC_Len; i++){
+          tags[index][i + 4] = reader_feedback_2D[index][i + 7];
+        }
+        tags[index][arrayLen] = rssi;
+        Serial.print("Tags(0x90)_");Serial.print(index);Serial.print("| ");
+        for (int i = 0; i <= arrayLen; i++){
+          String str = (tags[index][i] >= 16) ? "0x" : "0x0";
+          Serial.print(str);
+          Serial.print(tags[index][i], HEX);
+          Serial.print(" ");
+        }
+        Serial.print("RSSI:");Serial.print(rssi,HEX);
+        Serial.print("\n");
       }
-      Serial.print("RSSI:");Serial.print(rssi,HEX);
-      Serial.print("\n");
     }
     else if (reader_feedback_2D[index][3] ==(byte)0x81 && reader_feedback_2D[index][1] > 4){
       byte EPCnData_Len = reader_feedback_2D[index][6];
@@ -246,11 +255,15 @@ void cmdAction(byte cmd[],byte reader_feedback[300]){
     from_readerChar.writeValue(reader_feedback, reader_feedback[1] + 2);
   }
   if (reader_feedback[3] == (byte)0x80 && reader_feedback[6] > 0 && reader_feedback[1] > 4){
-    read_buffer_flag = 1;
     read_buffer_counted = (reader_feedback[5] * 100) + reader_feedback[6];
   }
   else if (reader_feedback[1] == 0x05 && reader_feedback[3] == (byte)0x92 && reader_feedback[5] > 0){
     read_buffer_counted = (reader_feedback[4] * 100) + reader_feedback[5];
+  }
+  if (reader_feedback[3] == (byte)0x93) {
+    read_buffer_counted = 0;
+    //free(tags);
+    memset(tags, 0, sizeof(tags[0][0]) * 6 * 50);
   }
 }
 
@@ -299,61 +312,92 @@ void cmd2reader(byte cmd[], long interval, int cmd_size){
   cmdAction(cmd,reader_feedback);
 }
 
-void testing(int flag, int tags_counted){
-  char num_string;
-  if (Serial.available()){
-    num_string = Serial.read();
+void scrantags_routine(){
+  byte cmd_inventory[] = {0xA0, 0x04 ,0xFE, 0x80, 0xFF};
+  byte cmd_get_buffer[] = {0xA0, 0x03, 0xFE, 0x92, 0xFF};
+  byte cmd_get_buffer_data[] = {0xA0, 0x06, 0xFE, 0x81, 0x03, 0x00, 0x08};
+  byte cmd_clear_buffer[] = {0xA0, 0x03, 0xFE, 0x93};
+  int tags_counted = 0;
+  int inventory_counter = 3;
+  int buffer_counter = 2;
+  int user_data_counter = 2;
+  unsigned long currentMillis;
+  long timer1 = millis();
+  Serial.print("Routine Start:");Serial.println(timer1);
+  Serial.println("****************************************************************");
+  // inventory tags
+  while(inventory_counter > 0){
+    currentMillis = millis();
+    if (currentMillis - previousMillis >= 100){
+      cmd2reader(cmd_inventory, 100, sizeof(cmd_inventory));
+      previousMillis = currentMillis;
+      inventory_counter -= 1;
+    }
   }
-  switch (num_string) {
-    case 48:
-    {
-      byte cmd[] = {0xA0, 0x03, 0xFE, 0x70,0xEF};
-      int cmd_size = sizeof(cmd);
-      cmd2reader(cmd, 50 , cmd_size);
-      break;
+  delay(250);
+  //get buffer
+  while(buffer_counter){
+    currentMillis = millis();
+    if (currentMillis - previousMillis >= 100){
+      cmd2reader(cmd_get_buffer, 100, sizeof(cmd_get_buffer));
+      previousMillis = currentMillis;
+      buffer_counter -= 1;
     }
-    case 49:
-    {
-      byte cmd[] = {0xA0, 0x04, 0xFE, 0x71, 0x04};
-      int cmd_size = sizeof(cmd);
-      cmd2reader(cmd, 300, cmd_size);
-      break;
+  }
+  //get userdata in tag
+  delay(250);
+  while(user_data_counter){
+    currentMillis = millis();
+    if (currentMillis - previousMillis >= 100){
+      cmd2reader(cmd_get_buffer_data, 100, sizeof(cmd_get_buffer_data));
+      previousMillis = currentMillis;
+      user_data_counter -= 1;
     }
-    case 50:
-    {
-      byte cmd[] = {0xA0, 0x04, 0xFE, 0x80, 0xFF};
-      int cmd_size = sizeof(cmd);
-      cmd2reader(cmd, 300, cmd_size);
-      break;
-    }
-    case 51:
-    {
-      byte cmd[] = {0xA0, 0x03, 0xFE, 0x92, 0xFF};
-      int cmd_size = sizeof(cmd);
-      if (flag = 1){
-        cmd2reader(cmd, 300, cmd_size);
+  }
+  delay(250);
+  cmd2reader(cmd_clear_buffer, 100, sizeof(cmd_clear_buffer));
+  long timer2= millis();
+  Serial.println("****************************************************************");
+  Serial.print("Routine End:");Serial.print(timer2);Serial.print("Duration:");Serial.println(timer2 - timer1);
+}
+
+void scrantags_routine2(){
+  byte cmd_inventory[] = {0xA0, 0x04 ,0xFE, 0x80, 0xFF};
+  byte cmd_get_buffer[] = {0xA0, 0x03, 0xFE, 0x90};
+  byte cmd_get_buffer_data[] = {0xA0, 0x06, 0xFE, 0x81, 0x03, 0x00, 0x08};
+  byte cmd_clear_buffer[] = {0xA0, 0x03, 0xFE, 0x93};
+  unsigned long currentMillis;
+  long timer1 = millis();
+  int  inventory_counter = 5;
+  if (currentMillis - previousMillis >= 300){
+    routin_counter += 1;
+    if (routin_counter < inventory_counter){
+      if (routin_counter == 1){
+        routin_timer_1 = millis();
+        Serial.print("routine Start:");Serial.println(routin_timer_1);
       }
-      else{
-        Serial.println("Please Scan tags first");
-      }
-      break;
+      cmd2reader(cmd_inventory, 300, sizeof(cmd_inventory));
     }
-    case 52:
-    {
-      byte cmd[] = {0xA0, 0x03, 0xFE, 0x90, 0xFF};
-      int cmd_size = sizeof(cmd);
-      if (tags_counted > 0){
-        cmd2reader(cmd, 300, cmd_size);
-      }
-      break;
+    else if (routin_counter >= inventory_counter && routin_counter < inventory_counter + 2 ){
+      cmd2reader(cmd_get_buffer, 300, sizeof(cmd_get_buffer));
     }
+    else if (routin_counter >= inventory_counter + 2 && routin_counter < inventory_counter + 4 ){
+      cmd2reader(cmd_get_buffer_data, 300, sizeof(cmd_get_buffer_data));
+    }
+    else if (routin_counter >= inventory_counter + 4){
+      cmd2reader(cmd_clear_buffer, 100, sizeof(cmd_clear_buffer));
+      routin_counter = 0;
+      routin_timer_2 = millis();
+      Serial.print("routine End:");Serial.print(routin_timer_2);Serial.print(" Duration:");Serial.println(routin_timer_2 - routin_timer_1);
+      //delay(10000);
+    }
+    previousMillis = currentMillis;
   }
 }
 
 void loop() {
    // put your main code here, to run repeatedly:
-  testing(read_buffer_flag, read_buffer_counted);
-  char num_string = Serial.read();
+
   // listen for BLE peripherals to connect:
   BLEDevice central = BLE.central();
   // if a central is connected to peripheral:
@@ -361,7 +405,7 @@ void loop() {
     // Only send data if we are connected to a central device.
     if (central.connected()) {
       isCentralConnected = true;
-      digitalWrite(LEDB, HIGH);
+      LEDBstate = HIGH;
       if (!reset_flag) {
         reset_flag = true;
         byte reset_cmd[] = {0xA0,0x03,0xFE,0x70,0xEF};
@@ -376,14 +420,19 @@ void loop() {
       }
     }
   }
-  else { //BLE connection state 
+  else { //BLE unconnected status
+    unsigned long currentMillis = millis(); 
     reset_flag = false;
     isCentralConnected = false;
-    digitalWrite(LEDB, HIGH);
-    delay(100);
-    digitalWrite(LEDB, LOW);
-    delay(100);
+    if (currentMillis - previousMillis >= 100){
+      LEDBstate = !LEDBstate;
+      previousMillis = currentMillis;
+    }
+    digitalWrite(LEDB, LEDBstate);
+    //scrantags_routine();
+    scrantags_routine2();
   }
+  digitalWrite(LEDB, LEDBstate);
 }
 
 
