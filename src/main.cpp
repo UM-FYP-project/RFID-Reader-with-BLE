@@ -14,6 +14,8 @@ UART Reader_uart(digitalPinToPinName(3), digitalPinToPinName(2), NC, NC); // TX,
 
 //Global Var
 unsigned long previousMillis = 0;
+unsigned long previousMillis_LEDB = 0;
+unsigned long previousMillis_routine = 0;
 int read_buffer_counted = 0;
 bool reset_flag = false;
 bool isCentralConnected = false; 
@@ -234,6 +236,8 @@ void array2DtoTags(byte reader_feedback_2D[6][50], int Array2dcount){
   }
 } 
 
+
+
 void cmdAction(byte cmd[],byte reader_feedback[300]){
   int feedback_len = 0;
   byte reader_feedback_2D[6][50] = {{},{},{},{},{},{}};
@@ -312,86 +316,43 @@ void cmd2reader(byte cmd[], long interval, int cmd_size){
   cmdAction(cmd,reader_feedback);
 }
 
-void scrantags_routine(){
-  byte cmd_inventory[] = {0xA0, 0x04 ,0xFE, 0x80, 0xFF};
-  byte cmd_get_buffer[] = {0xA0, 0x03, 0xFE, 0x92, 0xFF};
-  byte cmd_get_buffer_data[] = {0xA0, 0x06, 0xFE, 0x81, 0x03, 0x00, 0x08};
-  byte cmd_clear_buffer[] = {0xA0, 0x03, 0xFE, 0x93};
-  int tags_counted = 0;
-  int inventory_counter = 3;
-  int buffer_counter = 2;
-  int user_data_counter = 2;
-  unsigned long currentMillis;
-  long timer1 = millis();
-  Serial.print("Routine Start:");Serial.println(timer1);
-  Serial.println("****************************************************************");
-  // inventory tags
-  while(inventory_counter > 0){
-    currentMillis = millis();
-    if (currentMillis - previousMillis >= 100){
-      cmd2reader(cmd_inventory, 100, sizeof(cmd_inventory));
-      previousMillis = currentMillis;
-      inventory_counter -= 1;
-    }
-  }
-  delay(250);
-  //get buffer
-  while(buffer_counter){
-    currentMillis = millis();
-    if (currentMillis - previousMillis >= 100){
-      cmd2reader(cmd_get_buffer, 100, sizeof(cmd_get_buffer));
-      previousMillis = currentMillis;
-      buffer_counter -= 1;
-    }
-  }
-  //get userdata in tag
-  delay(250);
-  while(user_data_counter){
-    currentMillis = millis();
-    if (currentMillis - previousMillis >= 100){
-      cmd2reader(cmd_get_buffer_data, 100, sizeof(cmd_get_buffer_data));
-      previousMillis = currentMillis;
-      user_data_counter -= 1;
-    }
-  }
-  delay(250);
-  cmd2reader(cmd_clear_buffer, 100, sizeof(cmd_clear_buffer));
-  long timer2= millis();
-  Serial.println("****************************************************************");
-  Serial.print("Routine End:");Serial.print(timer2);Serial.print("Duration:");Serial.println(timer2 - timer1);
-}
-
-void scrantags_routine2(){
+void scrantags_routine(unsigned long currentMillis){
   byte cmd_inventory[] = {0xA0, 0x04 ,0xFE, 0x80, 0xFF};
   byte cmd_get_buffer[] = {0xA0, 0x03, 0xFE, 0x90};
   byte cmd_get_buffer_data[] = {0xA0, 0x06, 0xFE, 0x81, 0x03, 0x00, 0x08};
   byte cmd_clear_buffer[] = {0xA0, 0x03, 0xFE, 0x93};
-  unsigned long currentMillis;
-  long timer1 = millis();
-  int  inventory_counter = 5;
-  if (currentMillis - previousMillis >= 300){
-    routin_counter += 1;
-    if (routin_counter < inventory_counter){
-      if (routin_counter == 1){
-        routin_timer_1 = millis();
-        Serial.print("routine Start:");Serial.println(routin_timer_1);
-      }
-      cmd2reader(cmd_inventory, 300, sizeof(cmd_inventory));
+  //unsigned long currentMillis = millis();
+  int  inventory_counter = 4;
+  if (routin_counter < inventory_counter){
+    if (routin_counter == 0){
+      routin_timer_1 = millis();
+      Serial.print("routine Start:");Serial.println(routin_timer_1);
     }
-    else if (routin_counter >= inventory_counter && routin_counter < inventory_counter + 2 ){
-      cmd2reader(cmd_get_buffer, 300, sizeof(cmd_get_buffer));
+    if (currentMillis - previousMillis_routine >= 100){
+      cmd2reader(cmd_inventory, 50, sizeof(cmd_inventory));
+      routin_counter += 1;
+      previousMillis_routine = currentMillis;
     }
-    else if (routin_counter >= inventory_counter + 2 && routin_counter < inventory_counter + 4 ){
-      cmd2reader(cmd_get_buffer_data, 300, sizeof(cmd_get_buffer_data));
+  }
+  else if (routin_counter >= inventory_counter && routin_counter < inventory_counter + 2){
+    if (currentMillis - previousMillis_routine >= 500){
+      cmd2reader(cmd_get_buffer, 100, sizeof(cmd_get_buffer));
+      routin_counter += 1;
+      previousMillis_routine = currentMillis;
     }
-    else if (routin_counter >= inventory_counter + 4){
-      cmd2reader(cmd_clear_buffer, 100, sizeof(cmd_clear_buffer));
-      routin_counter = 0;
-      routin_timer_2 = millis();
-      Serial.print("routine End:");Serial.print(routin_timer_2);Serial.print(" Duration:");Serial.println(routin_timer_2 - routin_timer_1);
-      //delay(10000);
+  }
+  else if(routin_counter >= inventory_counter + 2 && routin_counter < inventory_counter + 4){
+    if (currentMillis - previousMillis_routine >= 500){
+      cmd2reader(cmd_get_buffer_data, 100, sizeof(cmd_get_buffer_data));
+      routin_counter += 1;
+      previousMillis_routine = currentMillis;
     }
-    previousMillis = currentMillis;
+  }
+  else if (routin_counter >= inventory_counter + 4){
+    cmd2reader(cmd_clear_buffer, 50, sizeof(cmd_clear_buffer));
+    routin_counter = 0;
+    routin_timer_2 = millis();
+    Serial.print("routine End:");Serial.print(routin_timer_2);Serial.print(" Duration:");Serial.println(routin_timer_2 - routin_timer_1);
   }
 }
 
@@ -424,13 +385,11 @@ void loop() {
     unsigned long currentMillis = millis(); 
     reset_flag = false;
     isCentralConnected = false;
-    if (currentMillis - previousMillis >= 100){
+    if (currentMillis - previousMillis_LEDB >= 100){
       LEDBstate = !LEDBstate;
-      previousMillis = currentMillis;
+      previousMillis_LEDB = currentMillis;
     }
-    digitalWrite(LEDB, LEDBstate);
-    //scrantags_routine();
-    scrantags_routine2();
+    scrantags_routine(millis());
   }
   digitalWrite(LEDB, LEDBstate);
 }
