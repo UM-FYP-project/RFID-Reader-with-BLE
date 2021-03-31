@@ -31,7 +31,19 @@ unsigned long flush_interval = 0;
 int routineTimes = 0;
 int errorReader_counter = 0;
 byte tags[6][100] = {{},{},{},{},{},{}}; //{{[A0][total_len][FE][EPC_len][PC+EPC(A1 + floor+ X+ Y+ facility+ B1 + Latitude + Longitude)+CRC][RSSI]}}
-// byte tags_81[6][50] = {{},{},{},{},{},{}};
+// byte tags_Data[20][10]= {{},{},{},{},{},{}}; //{{PC + CRC + hazard facility + rssi},}
+
+typedef struct {
+  byte rssi;
+  byte PC[2];
+  byte CRC[2];
+  byte facility[8];
+} TagEPC_type;
+
+TagEPC_type TagsData[10];
+
+byte test[7] = {23,41,5,3,10,1,15};
+
 // reader Enable Pin
 int reader_enable_pin = 4;
 BLEService INDNAV_BLE(service_uuid);
@@ -46,9 +58,10 @@ void cane_indicator(void);
 void cmdAction(byte cmd[],byte reader_feedback[300]);
 void cmd2reader(byte cmd[], unsigned long interval, int cmd_size);
 int data_from_reader(byte reader_feedback[300], int tagscount);
-
+int arraytoTags(byte reader_feedback[], int len);
 byte checksum(byte buffer[], int buffer_len);
-
+void ArraySort(byte array[], int arrayLen);
+void TagSort(TagEPC_type array[], int arrayLen);
 
 void setup() {
   // put your setup code here, to run once:
@@ -86,11 +99,7 @@ void setup() {
   digitalWrite(reader_enable_pin, HIGH);
 }
 
-void arraytoTags(byte reader_feedback[], int len){
-
-}
-
-int array2array2D(byte reader_feedback[], byte reader_feedback_2d[6][50], int len){
+int array2array2D(byte reader_feedback[], byte reader_feedback_2d[10][50], int len){
   unsigned long currentMillis;
   int x_2d = 0;
   int y_2d = 0;
@@ -117,12 +126,12 @@ int array2array2D(byte reader_feedback[], byte reader_feedback_2d[6][50], int le
       Serial.print(count);
       Serial.print("|");
       for (int y = 0; y < y_2d; y++){
-        // String str = (reader_feedback_2d[count][y] > 15) ? "0x" : "0x0";
-        // Serial.print(str);
-        // Serial.print(reader_feedback_2d[count][y], HEX);
-        // Serial.print(" ");
+        String str = (reader_feedback_2d[count][y] > 15) ? "0x" : "0x0";
+        Serial.print(str);
+        Serial.print(reader_feedback_2d[count][y], HEX);
+        Serial.print(" ");
       }
-      // Serial.println("");
+      Serial.println("");
       previousMillis_Array2D = currentMillis;
       count += 1;
     }
@@ -131,7 +140,7 @@ int array2array2D(byte reader_feedback[], byte reader_feedback_2d[6][50], int le
   return count;
 }
 
-void array2DtoTags(byte reader_feedback_2D[6][50], int Array2dcount){
+void array2DtoTags(byte reader_feedback_2D[10][50], int Array2dcount){
   Serial.println("----------------------------------------------------------------");
   Serial.println("****************Array2DtoTags****************");
   int EPCexist_index = 0;
@@ -246,7 +255,7 @@ void loop() {
     }
     scrantags_routine(millis());
   }
-  digitalWrite(LEDB, LEDBstate);
+  // Serial.print("\n");
 }
 
 void scrantags_routine(unsigned long currentMillis){
@@ -262,7 +271,7 @@ void scrantags_routine(unsigned long currentMillis){
     routine_counter = 1;
     Serial.println("----------------------------------------------------------------");
     Serial.print("routine Start:");Serial.print(routineTimes);
-    Serial.print(" |Time:");Serial.print((float)(routin_StartTime / 1000));
+    Serial.print(" |Time(s):");Serial.print((float)(routin_StartTime / 1000));
     Serial.print(" |Error Read:");Serial.println(errorReader_counter);
   }
   else if (routine_counter > 0 && routine_counter < 3){
@@ -291,8 +300,10 @@ void scrantags_routine(unsigned long currentMillis){
     }
     routineTimes++;
     Serial.print("routine End:");Serial.print(routineTimes);
-    Serial.print("| During:");Serial.println((float)((millis() - routin_StartTime) / 1000));
+    Serial.print("| During(s):");Serial.println((float)((millis() - routin_StartTime) / 1000));
   }
+  if (routine_counter >= 3 && read_buffer_counted < 1) 
+    routine_counter = 1;
 }
 
 void cane_indicator(){
@@ -301,7 +312,7 @@ void cane_indicator(){
 
 void cmdAction(byte cmd[],byte reader_feedback[300]){
   int feedback_len = 0;
-  byte reader_feedback_2D[6][50] = {{},{},{},{},{},{}};
+  byte reader_feedback_2D[10][50] = {{},{},{},{},{},{}};
   if (cmd[3] == (byte)0x90 || cmd[3] == (byte)0x81){
     feedback_len = data_from_reader(reader_feedback, read_buffer_counted);
   }
@@ -313,8 +324,10 @@ void cmdAction(byte cmd[],byte reader_feedback[300]){
   }
   if ((reader_feedback[3] ==(byte)0x90 || reader_feedback[3] == (byte)0x81) && reader_feedback[1] > 4){
     from_readerChar.writeValue(reader_feedback, feedback_len);
-    int Array2dcount = array2array2D(reader_feedback, reader_feedback_2D, feedback_len);
+    // int Array2dcount = array2array2D(reader_feedback, reader_feedback_2D, feedback_len);
     // array2DtoTags(reader_feedback_2D, Array2dcount);
+    int Arraycount = arraytoTags(reader_feedback, feedback_len);
+    TagSort(TagsData, Arraycount);
   }
   else {
     from_readerChar.writeValue(reader_feedback, reader_feedback[1] + 2);
@@ -328,6 +341,7 @@ void cmdAction(byte cmd[],byte reader_feedback[300]){
   if (reader_feedback[3] == (byte)0x93) {
     read_buffer_counted = 0;
     memset(tags, 0, sizeof(tags[0][0]) * 6 * 50);
+    memset(reader_feedback_2D, 0, sizeof(reader_feedback_2D[0][0]) * 10 * 50);
   }
 }
 
@@ -401,7 +415,7 @@ int data_from_reader(byte reader_feedback[300], int tagscount){
         Serial.print(str);
         Serial.print(feedback[index], HEX);
         Serial.print(" ");
-        if (feedback[index - 3]== byte(0xA0) && feedback[index - 2]== byte(0x04) && (feedback[index] == byte(0x81) || feedback[index] == byte(0x90))){
+        if (feedback[index - 3]== byte(0xA0) && feedback[index - 2] == byte(0x04) && (feedback[index] == byte(0x81) || feedback[index] == byte(0x90))){
           count = 1;
         }
         if (feedback[index] == byte(0xFE) && feedback[index - 2] == byte(0xA0)){
@@ -454,7 +468,7 @@ int data_from_reader(byte reader_feedback[300], int tagscount){
           flush_loop++;
           previousMillis_flush = currentMillis;
         }
-        if (flush_loop > 20){
+        if (flush_loop > 15){
           break;
         }
       }
@@ -474,6 +488,137 @@ int data_from_reader(byte reader_feedback[300], int tagscount){
   }
   Serial.print("\n");
   return Index;
+}
+
+int arraytoTags(byte reader_feedback[], int Len){
+  int x_index = 0;
+  int y_index = 0;
+  int A0_flag = 0;
+  Serial.println("****Array to DataArray****");
+  for (int index = 0; index < Len; index++){
+    if (reader_feedback[index] == (byte)0xA0 && reader_feedback[index + 2] == (byte)0xFE){
+      x_index += 1;
+      y_index = 0;
+      A0_flag = 1;
+    }
+    if (A0_flag){
+      if (reader_feedback[index + 3] == (byte)0x90 && reader_feedback[index + 1] > 4){
+        bool existed_flag = false;
+        int ecpLen = reader_feedback[index + 6];
+        byte PC[2] = {reader_feedback[index + 7], reader_feedback[index + 8]};
+        byte CRC[2] = {reader_feedback[index + 6 + ecpLen - 1], reader_feedback[index + 6 + ecpLen]};
+        byte rssi = reader_feedback[index + ecpLen + 7];
+        byte EPC[8] = {};
+        for (int tags_index = 0; tags_index < 20; tags_index++){
+          if (TagsData[tags_index].CRC[0] == CRC[0] && TagsData[tags_index].CRC[1] == CRC[1]) {
+            existed_flag = true;
+            TagsData[tags_index].rssi =rssi;
+            break;
+          }
+          if(TagsData[tags_index].rssi == 0){
+            break;
+          }
+        }
+        if (!existed_flag){
+          for (int epc_index = 0; epc_index < 8; epc_index++){
+            EPC[epc_index] = reader_feedback[index + epc_index + 9];
+          }
+          // Serial.print(x_index);Serial.print("|");
+          // Serial.print("RSSI:");Serial.print(rssi, HEX);Serial.print("|");
+          // Serial.print("PC:");
+          // for (int PC_i = 0; PC_i < sizeof(PC); PC_i++){
+          //   Serial.print(PC[PC_i], HEX);
+          //   Serial.print(" ");
+          // }
+          // Serial.print("|");
+          // Serial.print("CRC:");
+          // for (int CRC_i = 0; CRC_i < sizeof(CRC); CRC_i++){
+          //   Serial.print(CRC[CRC_i], HEX);
+          //   Serial.print(" ");
+          // }
+          // Serial.print("|");
+          // Serial.print("EPC:");
+          // for (int EPC_i = 0; EPC_i < 6; EPC_i++){
+          //   Serial.print(EPC[EPC_i], HEX);
+          //   Serial.print(" ");
+          // }
+          // Serial.print("\n");
+          TagsData[x_index - 1].rssi =rssi;
+          memcpy(&TagsData[x_index - 1].PC, &PC, sizeof(PC));
+          memcpy(&TagsData[x_index - 1].CRC, &CRC, sizeof(CRC));
+          memcpy(&TagsData[x_index - 1].facility, &EPC, sizeof(EPC));
+        }
+      }
+      y_index += 1;
+    }
+  }
+  // for (int i = 0; i < x_index; i++){
+  //   Serial.print(i);
+  //   Serial.print("| RSSI:");
+  //   Serial.print(TagsData[i].rssi, HEX);
+  //   Serial.print(" |PC:");
+  //   for (int PC_i = 0; PC_i < sizeof(TagsData[i].PC); PC_i++){
+  //     Serial.print(TagsData[i].PC[PC_i], HEX);
+  //     Serial.print(" ");
+  //   }
+  //   Serial.print(" |CRC:");
+  //   for (int CRC_i = 0; CRC_i < sizeof(TagsData[i].CRC); CRC_i++){
+  //     Serial.print(TagsData[i].CRC[CRC_i], HEX);
+  //     Serial.print(" ");
+  //   }
+  //   Serial.print(" |EPC:");
+  //   for (int EPC_i = 0; EPC_i < sizeof(TagsData[i].facility); EPC_i++){
+  //     Serial.print(TagsData[i].facility[EPC_i], HEX);
+  //     Serial.print(" ");
+  //   }
+  //   Serial.print(" |");
+  //   for (int EPC_i = 0; EPC_i < sizeof(TagsData[i].facility) - 2; EPC_i++){
+  //     Serial.print((char)TagsData[i].facility[EPC_i]);
+  //   }
+  //   Serial.print("\n"); 
+  // }
+  return x_index;
+}
+
+
+void TagSort(TagEPC_type array[], int arrayLen){
+  Serial.println("****DataArray Sort****");
+  for (int i = 0; i < arrayLen; i++){
+    for (int j = i + 1; j < arrayLen; j++){
+      if  (array[i].rssi != 0 && array[j].rssi != 0){
+        if (array[i].rssi >= array[j].rssi){
+          TagEPC_type tagCopy;
+          memcpy(&tagCopy, &array[j], sizeof(array[j]));
+          memcpy(&array[j], &array[i], sizeof(array[i]));
+          memcpy(&array[i], &tagCopy, sizeof(tagCopy));
+        }
+      }
+    }
+  }
+  for (int i = 0; i < arrayLen; i++){
+    Serial.print(i);
+    Serial.print("| RSSI:");Serial.print(array[i].rssi);
+    Serial.print(" |PC:");
+    for (int PC_i = 0; PC_i < sizeof(array[i].PC); PC_i++){
+      Serial.print(array[i].PC[PC_i], HEX);
+      Serial.print(" ");
+    }
+    Serial.print(" |CRC:");
+    for (int CRC_i = 0; CRC_i < sizeof(array[i].CRC); CRC_i++){
+      Serial.print(array[i].CRC[CRC_i], HEX);
+      Serial.print(" ");
+    }
+    Serial.print(" |EPC:");
+    for (int EPC_i = 0; EPC_i < sizeof(array[i].facility); EPC_i++){
+      Serial.print(array[i].facility[EPC_i], HEX);
+      Serial.print(" ");
+    }
+    Serial.print(" |");
+    for (int EPC_i = 0; EPC_i < sizeof(array[i].facility) - 2; EPC_i++){
+      Serial.print((char)array[i].facility[EPC_i]);
+    }
+    Serial.print("\n"); 
+  }
 }
 
 byte checksum(byte buffer[], int buffer_len) {
