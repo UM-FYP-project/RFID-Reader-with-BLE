@@ -8,7 +8,8 @@ const char* service_uuid = "2A68";
 const char* battery_levelSer_uuid = "2A19";
 const char* to_readerChar_uuid = "7269";
 const char* from_readerChar_uuid = "726F";
-const char* readerErrorChar_uuid = "7245";
+const char* isNaviChar_uuid = "4676";
+
 
 // Uart communication
 UART Reader_uart(digitalPinToPinName(3), digitalPinToPinName(2), NC, NC); // TX, RX
@@ -30,14 +31,14 @@ unsigned long  routin_StartTime = 0;
 unsigned long flush_interval = 0;
 int routineTimes = 0;
 int errorReader_counter = 0;
-byte tags[6][100] = {{},{},{},{},{},{}}; //{{[A0][total_len][FE][EPC_len][PC+EPC(A1 + floor+ X+ Y+ facility+ B1 + Latitude + Longitude)+CRC][RSSI]}}
+// byte tags[6][100] = {{},{},{},{},{},{}}; //{{[A0][total_len][FE][EPC_len][PC+EPC(A1 + floor+ X+ Y+ facility+ B1 + Latitude + Longitude)+CRC][RSSI]}}
 // byte tags_Data[20][10]= {{},{},{},{},{},{}}; //{{PC + CRC + hazard facility + rssi},}
 
 typedef struct {
   byte rssi;
   byte PC[2];
   byte CRC[2];
-  byte facility[8];
+  byte facility[8]; 
 } TagEPC_type;
 
 TagEPC_type TagsData[10];
@@ -99,126 +100,6 @@ void setup() {
   digitalWrite(reader_enable_pin, HIGH);
 }
 
-int array2array2D(byte reader_feedback[], byte reader_feedback_2d[10][50], int len){
-  unsigned long currentMillis;
-  int x_2d = 0;
-  int y_2d = 0;
-  int flag = 0;
-  Serial.println("****Array to 2D Array****");
-  for (int index = 0; index < len; index++){
-    if (reader_feedback[index] == (byte)0xA0 && reader_feedback[index + 2] == (byte)0xFE){
-      x_2d += 1;
-      y_2d = 0;
-      flag = 1;
-    }
-    if (flag){
-      reader_feedback_2d[x_2d - 1][y_2d] = reader_feedback[index];
-      y_2d += 1;
-    }
-  }
-  Serial.println("****2D Array****");
-  int count = 0;
-  while(count < x_2d){
-    currentMillis = millis();
-    if (currentMillis - previousMillis_Array2D >= 30){
-      Serial.print(currentMillis);
-      Serial.print("|");
-      Serial.print(count);
-      Serial.print("|");
-      for (int y = 0; y < y_2d; y++){
-        String str = (reader_feedback_2d[count][y] > 15) ? "0x" : "0x0";
-        Serial.print(str);
-        Serial.print(reader_feedback_2d[count][y], HEX);
-        Serial.print(" ");
-      }
-      Serial.println("");
-      previousMillis_Array2D = currentMillis;
-      count += 1;
-    }
-  }
-  Serial.print("\n");
-  return count;
-}
-
-void array2DtoTags(byte reader_feedback_2D[10][50], int Array2dcount){
-  Serial.println("----------------------------------------------------------------");
-  Serial.println("****************Array2DtoTags****************");
-  int EPCexist_index = 0;
-  for (int index = 0; index < Array2dcount; index++){
-    Serial.print("Array_");Serial.print(index);Serial.print("| ");
-    for (int i = 0; i < reader_feedback_2D[index][1] + 2; i++) {
-      String str = (reader_feedback_2D[index][i] > 15) ? "0x" : "0x0";
-      Serial.print(str);
-      Serial.print(reader_feedback_2D[index][i], HEX);
-      Serial.print(" ");
-    }
-    Serial.print("\n");
-    if (reader_feedback_2D[index][3] ==(byte)0x90 && reader_feedback_2D[index][1] > 4){
-      bool isEPCexist = false;
-      byte EPC_Len = (byte)reader_feedback_2D[index][6];
-      byte arrayLen = (byte)(EPC_Len + 4);
-      byte rssi = (byte)reader_feedback_2D[index][EPC_Len + 7];
-      for (int x = 0; x < Array2dcount; x++){
-        isEPCexist = ((tags[x][tags[x][1] - 2] == reader_feedback_2D[index][EPC_Len + 6]) && (tags[x][tags[x][1] - 1] == reader_feedback_2D[index][EPC_Len + 7]));
-        if (isEPCexist){
-          EPCexist_index = x;
-        }
-      }
-      if (!isEPCexist) {
-        tags[index][0] = (byte)0xA0;
-        tags[index][1] = (byte)arrayLen;
-        tags[index][2] = (byte)0xFE;
-        tags[index][3] = (byte)EPC_Len;
-        for (int i = 0; i < EPC_Len; i++){
-          tags[index][i + 4] = reader_feedback_2D[index][i + 7];
-        }
-        tags[index][arrayLen] = rssi;
-        Serial.print("Tags(0x90)_");Serial.print(index);Serial.print("| ");
-        for (int i = 0; i <= arrayLen; i++){
-          String str = (tags[index][i] > 15) ? "0x" : "0x0";
-          Serial.print(str);
-          Serial.print(tags[index][i], HEX);
-          Serial.print(" ");
-        }
-        Serial.print("RSSI:");Serial.print(rssi,HEX);
-        Serial.print("\n");
-      }
-      else {
-        tags[EPCexist_index][tags[EPCexist_index][1]] = rssi;
-      }
-    }
-    else if (reader_feedback_2D[index][3] ==(byte)0x81 && reader_feedback_2D[index][1] > 4){
-      byte EPCnData_Len = reader_feedback_2D[index][6];
-      byte Data_Len = (byte)reader_feedback_2D[index][reader_feedback_2D[index][1] - 2];
-      byte EPC_Len = (byte)(EPCnData_Len - Data_Len);
-      for (int x = 0; x < Array2dcount; x++){
-        if (EPC_Len == tags[x][3]){
-          int epcmatchCounter = 0;
-          for(int y = 0; y < EPC_Len; y++){
-            if (tags[x][4 + y] == reader_feedback_2D[index][7 + y])
-              epcmatchCounter += 1;
-          }
-          if (epcmatchCounter == EPC_Len) {
-            tags[x][EPC_Len + 5] = Data_Len;
-            tags[x][1] += Data_Len + 1;
-            for(int y = 0; y <= Data_Len; y++){
-              tags[x][EPC_Len + 6 + y] =  reader_feedback_2D[index][EPC_Len + 7 +y];
-            }
-            Serial.print("Tags(0x81)_");Serial.print(x);Serial.print("| ");
-            for (int i = 0; i <= tags[x][1]; i++){
-              String str = (tags[x][i] > 15) ? "0x" : "0x0";
-              Serial.print(str);
-              Serial.print(tags[x][i], HEX);
-              Serial.print(" ");
-            }
-            Serial.print("\n");
-          }
-        }
-      }
-    }
-  }
-} 
-
 void loop() {
   // put your main code here, to run repeatedly:
   // listen for BLE peripherals to connect:
@@ -234,14 +115,16 @@ void loop() {
         while(Reader_uart.read() >= 0){}
         byte reset_cmd[] = {0xA0,0x03,0xFE,0x70,0xEF};
         cmd2reader(reset_cmd, 50, 5);
-        from_readerChar.writeValue(byte(0x00));
+        // from_readerChar.writeValue(byte(0x00));
         reset_flag = true;
       }
       byte from_BLE[] = {};
       if (to_readerChar.written()) { // revice the comand through BLE
         byte length = to_readerChar.valueLength();
         to_readerChar.readValue(from_BLE, length);
-        cmd2reader(from_BLE, 300, length);
+        if (from_BLE[0] == (byte)0xA0 && from_BLE[2] == (byte)0xFE){
+          cmd2reader(from_BLE, 50, length);
+        }
       }
     }
   }
@@ -256,6 +139,7 @@ void loop() {
     scrantags_routine(millis());
   }
   // Serial.print("\n");
+  digitalWrite(LEDB, LEDBstate);
 }
 
 void scrantags_routine(unsigned long currentMillis){
@@ -274,7 +158,7 @@ void scrantags_routine(unsigned long currentMillis){
     Serial.print(" |Time(s):");Serial.print((float)(routin_StartTime / 1000));
     Serial.print(" |Error Read:");Serial.println(errorReader_counter);
   }
-  else if (routine_counter > 0 && routine_counter < 3){
+  else if (routine_counter > 0 && routine_counter < 2){
     //byte cmd = {0xA0, 0x04 ,0xFE, 0x80, 0xFF};
     if (currentMillis - previousMillis_routine >= 500){
       cmd2reader(cmd[0], 50, 5);
@@ -283,7 +167,7 @@ void scrantags_routine(unsigned long currentMillis){
       previousMillis_routine = currentMillis;
     }
   }
-  else if (routine_counter >= 3 && routine_counter < 5){
+  else if (routine_counter >= 2 && routine_counter < 3){
     if (currentMillis - previousMillis_routine >= 500){
       cmd2reader(cmd[1], 50, 4);
       delay(50);
@@ -300,9 +184,9 @@ void scrantags_routine(unsigned long currentMillis){
     }
     routineTimes++;
     Serial.print("routine End:");Serial.print(routineTimes);
-    Serial.print("| During(s):");Serial.println((float)((millis() - routin_StartTime) / 1000));
+    Serial.print("| During(s):");Serial.println(millis() - routin_StartTime);
   }
-  if (routine_counter >= 3 && read_buffer_counted < 1) 
+  if (routine_counter >= 2 && read_buffer_counted < 1) 
     routine_counter = 1;
 }
 
@@ -312,7 +196,7 @@ void cane_indicator(){
 
 void cmdAction(byte cmd[],byte reader_feedback[300]){
   int feedback_len = 0;
-  byte reader_feedback_2D[10][50] = {{},{},{},{},{},{}};
+  // byte reader_feedback_2D[10][50] = {{},{},{},{},{},{}};
   if (cmd[3] == (byte)0x90 || cmd[3] == (byte)0x81){
     feedback_len = data_from_reader(reader_feedback, read_buffer_counted);
   }
@@ -322,13 +206,15 @@ void cmdAction(byte cmd[],byte reader_feedback[300]){
   else{
     feedback_len = data_from_reader(reader_feedback, 1);
   }
-  if ((reader_feedback[3] ==(byte)0x90 || reader_feedback[3] == (byte)0x81) && reader_feedback[1] > 4){
+  if (reader_feedback[3] ==(byte)0x90 && reader_feedback[1] > 4){
     from_readerChar.writeValue(reader_feedback, feedback_len);
     // int Array2dcount = array2array2D(reader_feedback, reader_feedback_2D, feedback_len);
     // array2DtoTags(reader_feedback_2D, Array2dcount);
     int Arraycount = arraytoTags(reader_feedback, feedback_len);
     TagSort(TagsData, Arraycount);
   }
+  else if (reader_feedback[3] == (byte)0x81 && reader_feedback[1] > 4)
+    from_readerChar.writeValue(reader_feedback, feedback_len);
   else {
     from_readerChar.writeValue(reader_feedback, reader_feedback[1] + 2);
   }
@@ -340,8 +226,9 @@ void cmdAction(byte cmd[],byte reader_feedback[300]){
   }
   if (reader_feedback[3] == (byte)0x93) {
     read_buffer_counted = 0;
-    memset(tags, 0, sizeof(tags[0][0]) * 6 * 50);
-    memset(reader_feedback_2D, 0, sizeof(reader_feedback_2D[0][0]) * 10 * 50);
+    memset(TagsData, 0, sizeof(TagsData));
+    // memset(tags, 0, sizeof(tags[0][0]) * 6 * 50);
+    // memset(reader_feedback_2D, 0, sizeof(reader_feedback_2D[0][0]) * 10 * 50);
   }
 }
 
@@ -368,7 +255,7 @@ void cmd2reader(byte cmd[], unsigned long interval, int cmd_size){
       Reader_uart.write(cmd, buffer_len);
       if (cmd[3] == (byte)0x70){
         if (isCentralConnected)
-          from_readerChar.writeValue(byte(0x00));
+          // from_readerChar.writeValue(byte(0x00));
         flag = 1;
         counter = 4;
       }
@@ -411,10 +298,10 @@ int data_from_reader(byte reader_feedback[300], int tagscount){
     if (currentMillis - previousMillis_feedback >= 30){
       while(Reader_uart.available() > 0){
         feedback[index] = Reader_uart.read();
-        String str = (feedback[index] > 15) ? "0x" : "0x0";
-        Serial.print(str);
-        Serial.print(feedback[index], HEX);
-        Serial.print(" ");
+        // String str = (feedback[index] > 15) ? "0x" : "0x0";
+        // Serial.print(str);
+        // Serial.print(feedback[index], HEX);
+        // Serial.print(" ");
         if (feedback[index - 3]== byte(0xA0) && feedback[index - 2] == byte(0x04) && (feedback[index] == byte(0x81) || feedback[index] == byte(0x90))){
           count = 1;
         }
@@ -438,12 +325,12 @@ int data_from_reader(byte reader_feedback[300], int tagscount){
       }
     }
   }
-  Serial.print("\n");
+  // Serial.print("\n");
   if (tagscount) {
     if ((feedback[0] != (byte)0xA0 && feedback[2] != (byte)0xFE)){
       errorReader_counter += 1;
       Serial.print("****Rearrange feedback**** time:");
-      Serial.println((float)(millis()/1000));
+      Serial.println(float(millis()/1000));
       while (!(feedback[rearrange_index] == (byte)0xA0 && feedback[rearrange_index + 2] == (byte)0xFE)){
         rearrange_index++;
       }
@@ -460,7 +347,7 @@ int data_from_reader(byte reader_feedback[300], int tagscount){
       }
       int flush_loop = 0;
       unsigned long previousMillis_flush = 0;
-      while (true || !isCentralConnected)
+      while (true)
       {
         currentMillis = millis();
         if (currentMillis - previousMillis_flush >= 100){
@@ -468,7 +355,7 @@ int data_from_reader(byte reader_feedback[300], int tagscount){
           flush_loop++;
           previousMillis_flush = currentMillis;
         }
-        if (flush_loop > 15){
+        if (flush_loop > 10){
           break;
         }
       }
@@ -476,7 +363,7 @@ int data_from_reader(byte reader_feedback[300], int tagscount){
       flush_interval = millis();
     }
     else {
-      Serial.println("****Reader feedback****");
+      Serial.println("****Reader feedback**** Tags:");
       for (Index = 0; Index < index; Index++){
         reader_feedback[Index] = feedback[Index];
         String str = (reader_feedback[Index] > 15) ? "0x" : "0x0";
@@ -494,7 +381,7 @@ int arraytoTags(byte reader_feedback[], int Len){
   int x_index = 0;
   int y_index = 0;
   int A0_flag = 0;
-  Serial.println("****Array to DataArray****");
+  Serial.print("****Array to DataArray****");
   for (int index = 0; index < Len; index++){
     if (reader_feedback[index] == (byte)0xA0 && reader_feedback[index + 2] == (byte)0xFE){
       x_index += 1;
@@ -504,6 +391,7 @@ int arraytoTags(byte reader_feedback[], int Len){
     if (A0_flag){
       if (reader_feedback[index + 3] == (byte)0x90 && reader_feedback[index + 1] > 4){
         bool existed_flag = false;
+        int feedbackLen = reader_feedback[index + 1] + 2;
         int ecpLen = reader_feedback[index + 6];
         byte PC[2] = {reader_feedback[index + 7], reader_feedback[index + 8]};
         byte CRC[2] = {reader_feedback[index + 6 + ecpLen - 1], reader_feedback[index + 6 + ecpLen]};
@@ -548,10 +436,12 @@ int arraytoTags(byte reader_feedback[], int Len){
           memcpy(&TagsData[x_index - 1].CRC, &CRC, sizeof(CRC));
           memcpy(&TagsData[x_index - 1].facility, &EPC, sizeof(EPC));
         }
+        index += feedbackLen / 2;
       }
       y_index += 1;
     }
   }
+  Serial.println(x_index);
   // for (int i = 0; i < x_index; i++){
   //   Serial.print(i);
   //   Serial.print("| RSSI:");
@@ -586,7 +476,7 @@ void TagSort(TagEPC_type array[], int arrayLen){
   for (int i = 0; i < arrayLen; i++){
     for (int j = i + 1; j < arrayLen; j++){
       if  (array[i].rssi != 0 && array[j].rssi != 0){
-        if (array[i].rssi >= array[j].rssi){
+        if (array[i].rssi <= array[j].rssi){
           TagEPC_type tagCopy;
           memcpy(&tagCopy, &array[j], sizeof(array[j]));
           memcpy(&array[j], &array[i], sizeof(array[i]));
@@ -595,30 +485,30 @@ void TagSort(TagEPC_type array[], int arrayLen){
       }
     }
   }
-  for (int i = 0; i < arrayLen; i++){
-    Serial.print(i);
-    Serial.print("| RSSI:");Serial.print(array[i].rssi);
-    Serial.print(" |PC:");
-    for (int PC_i = 0; PC_i < sizeof(array[i].PC); PC_i++){
-      Serial.print(array[i].PC[PC_i], HEX);
-      Serial.print(" ");
-    }
-    Serial.print(" |CRC:");
-    for (int CRC_i = 0; CRC_i < sizeof(array[i].CRC); CRC_i++){
-      Serial.print(array[i].CRC[CRC_i], HEX);
-      Serial.print(" ");
-    }
-    Serial.print(" |EPC:");
-    for (int EPC_i = 0; EPC_i < sizeof(array[i].facility); EPC_i++){
-      Serial.print(array[i].facility[EPC_i], HEX);
-      Serial.print(" ");
-    }
-    Serial.print(" |");
-    for (int EPC_i = 0; EPC_i < sizeof(array[i].facility) - 2; EPC_i++){
-      Serial.print((char)array[i].facility[EPC_i]);
-    }
-    Serial.print("\n"); 
-  }
+  // for (int i = 0; i < arrayLen; i++){
+  //   Serial.print(i);
+  //   Serial.print("| RSSI:");Serial.print(array[i].rssi);
+  //   Serial.print(" |PC:");
+  //   for (int PC_i = 0; PC_i < sizeof(array[i].PC); PC_i++){
+  //     Serial.print(array[i].PC[PC_i], HEX);
+  //     Serial.print(" ");
+  //   }
+  //   Serial.print(" |CRC:");
+  //   for (int CRC_i = 0; CRC_i < sizeof(array[i].CRC); CRC_i++){
+  //     Serial.print(array[i].CRC[CRC_i], HEX);
+  //     Serial.print(" ");
+  //   }
+  //   Serial.print(" |EPC:");
+  //   for (int EPC_i = 0; EPC_i < sizeof(array[i].facility); EPC_i++){
+  //     Serial.print(array[i].facility[EPC_i], HEX);
+  //     Serial.print(" ");
+  //   }
+  //   Serial.print(" |");
+  //   for (int EPC_i = 0; EPC_i < sizeof(array[i].facility) - 2; EPC_i++){
+  //     Serial.print((char)array[i].facility[EPC_i]);
+  //   }
+  //   Serial.print("\n"); 
+  // }
 }
 
 byte checksum(byte buffer[], int buffer_len) {
