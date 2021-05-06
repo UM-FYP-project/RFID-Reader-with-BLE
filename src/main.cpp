@@ -1,6 +1,14 @@
+#include <Wire.h>
 #include <Arduino.h>
 #include <ArduinoBLE.h>
+#include <Sparkfun_DRV2605L.h>
 #include <CooperativeMultitasking.h>
+
+#define TCAADDR 0x70
+SFE_HMD_DRV2605L LRA_y;
+SFE_HMD_DRV2605L LRA_x;
+void tcaselect(uint8_t i); 
+
 
 //UUID Setting
 const char* device_name = "INDNAV0001";
@@ -9,7 +17,7 @@ const char* battery_levelSer_uuid = "2A19";
 const char* to_readerChar_uuid = "7269";
 const char* from_readerChar_uuid = "726F";
 const char* isNaviChar_uuid = "4676";
-
+const char* positionChar_uuid = "5677";
 
 // Uart communication
 UART Reader_uart(digitalPinToPinName(3), digitalPinToPinName(2), NC, NC); // TX, RX
@@ -41,7 +49,35 @@ typedef struct {
   byte facility[8]; 
 } TagEPC_type;
 
+typedef struct {
+  byte RTP;
+  int Delay;
+} LRAMove;
+
+typedef struct {
+  byte FBControl; // for .MotorSelect
+  byte ratedVolt; // for .ratevolt
+  byte ODClamp; // for .clamp
+  byte Crtl1; // for .cntrl1
+  byte Crtl2;// for .cntrl2
+  byte Crtl3;// for .cntrl3
+  byte LRA_Period; // for .OLP
+} LRAPara;
+
 TagEPC_type TagsData[10];
+LRAPara YLRA = {B10110110, 0x91, 0xEB, 0x18, B11110101, B10001001, 0x3A};
+
+LRAMove LRA_forward[] = {
+  {0xFF, 10},
+  {0x00, 1},
+  {0x7F, 200},
+  {0xFF, 20},
+  {0x00, 5},
+  {0x7F, 200},
+  {0xFF, 40},
+  {0x00, 5},
+  {0x7F, 200},
+};
 
 byte test[7] = {23,41,5,3,10,1,15};
 
@@ -50,7 +86,7 @@ int reader_enable_pin = 4;
 BLEService INDNAV_BLE(service_uuid);
 BLEService Battery(battery_levelSer_uuid);
 BLECharacteristic to_readerChar(to_readerChar_uuid, BLEWrite, 60);
-BLECharacteristic from_readerChar(from_readerChar_uuid, BLERead | BLENotify, 300);
+BLECharacteristic from_readerChar(from_readerChar_uuid, BLERead | BLENotify, 400);
 BLEByteCharacteristic battery_leveChar(battery_levelSer_uuid, BLERead | BLENotify);
 
 //function declaration
@@ -63,6 +99,7 @@ int arraytoTags(byte reader_feedback[], int len);
 byte checksum(byte buffer[], int buffer_len);
 void ArraySort(byte array[], int arrayLen);
 void TagSort(TagEPC_type array[], int arrayLen);
+void tcaselect(uint8_t i); 
 
 void setup() {
   // put your setup code here, to run once:
@@ -109,9 +146,9 @@ void loop() {
     // Only send data if we are connected to a central device.
     if (central.connected()) {
       isCentralConnected = true;
-      LEDBstate = HIGH;
+      digitalWrite(13, HIGH);
       if (!reset_flag) {
-        delay(20);
+        // delay(20);
         while(Reader_uart.read() >= 0){}
         byte reset_cmd[] = {0xA0,0x03,0xFE,0x70,0xEF};
         cmd2reader(reset_cmd, 50, 5);
@@ -140,6 +177,10 @@ void loop() {
   }
   // Serial.print("\n");
   digitalWrite(LEDB, LEDBstate);
+  digitalWrite(13, LOW);
+  // if (millis() > 7200000){
+  //   software_Reset();
+  // }
 }
 
 void scrantags_routine(unsigned long currentMillis){
@@ -155,30 +196,30 @@ void scrantags_routine(unsigned long currentMillis){
     routine_counter = 1;
     Serial.println("----------------------------------------------------------------");
     Serial.print("routine Start:");Serial.print(routineTimes);
-    Serial.print(" |Time(s):");Serial.print((float)(routin_StartTime / 1000));
+    // Serial.print(" |Time(s):");Serial.print((float)(routin_StartTime / 1000));
     Serial.print(" |Error Read:");Serial.println(errorReader_counter);
   }
   else if (routine_counter > 0 && routine_counter < 2){
     //byte cmd = {0xA0, 0x04 ,0xFE, 0x80, 0xFF};
-    if (currentMillis - previousMillis_routine >= 500){
+    if (currentMillis - previousMillis_routine >= 200){
       cmd2reader(cmd[0], 50, 5);
-      delay(50);
+      // delay(50);
       routine_counter++;
       previousMillis_routine = currentMillis;
     }
   }
   else if (routine_counter >= 2 && routine_counter < 3){
-    if (currentMillis - previousMillis_routine >= 500){
+    if (currentMillis - previousMillis_routine >= 200){
       cmd2reader(cmd[1], 50, 4);
-      delay(50);
+      // delay(50);
       routine_counter++;
       previousMillis_routine = currentMillis;
     }
   }
   else {
-    if (currentMillis - previousMillis_routine >= 100){
+    if (currentMillis - previousMillis_routine >= 50){
       cmd2reader(cmd[3], 50, 4);
-      delay(50);
+      // delay(50);
       routine_counter = 0;
       previousMillis_routine = currentMillis;
     }
@@ -243,13 +284,13 @@ void cmd2reader(byte cmd[], unsigned long interval, int cmd_size){
   }
   Serial.println("----------------------------------------------------------------");
   Serial.println("****Send Cmd to Read****");
-  for(int i = 0; i < buffer_len; i++){
-    String str = (cmd[i] > 15) ? "0x" : "0x0";
-    Serial.print(str);
-    Serial.print(cmd[i],HEX);
-    Serial.print(" ");
-  }
-  Serial.print("\n");
+  // for(int i = 0; i < buffer_len; i++){
+  //   String str = (cmd[i] > 15) ? "0x" : "0x0";
+  //   Serial.print(str);
+  //   Serial.print(cmd[i],HEX);
+  //   Serial.print(" ");
+  // }
+  // Serial.print("\n");
   while (!Reader_uart.available()) {
     if (flag == 0){
       Reader_uart.write(cmd, buffer_len);
@@ -276,7 +317,7 @@ void cmd2reader(byte cmd[], unsigned long interval, int cmd_size){
       break;
     }
   }
-  delay(50);
+  // delay(50);
   cmdAction(cmd,reader_feedback);
 }
 
@@ -294,7 +335,7 @@ int data_from_reader(byte reader_feedback[300], int tagscount){
   Serial.print("\n");
   while(count){
     currentMillis = millis();
-    delay(20);
+    // delay(20);
     if (currentMillis - previousMillis_feedback >= 30){
       while(Reader_uart.available() > 0){
         feedback[index] = Reader_uart.read();
@@ -364,13 +405,13 @@ int data_from_reader(byte reader_feedback[300], int tagscount){
     }
     else {
       Serial.println("****Reader feedback**** Tags:");
-      for (Index = 0; Index < index; Index++){
-        reader_feedback[Index] = feedback[Index];
-        String str = (reader_feedback[Index] > 15) ? "0x" : "0x0";
-        Serial.print(str);
-        Serial.print(reader_feedback[Index], HEX);
-        Serial.print(" ");
-      }
+      // for (Index = 0; Index < index; Index++){
+      //   reader_feedback[Index] = feedback[Index];
+      //   String str = (reader_feedback[Index] > 15) ? "0x" : "0x0";
+      //   Serial.print(str);
+      //   Serial.print(reader_feedback[Index], HEX);
+      //   Serial.print(" ");
+      // }
     }
   }
   Serial.print("\n");
@@ -518,4 +559,11 @@ byte checksum(byte buffer[], int buffer_len) {
   }
   sum = 255 - sum + 1;
   return sum;
+}
+
+void tcaselect(uint8_t i) {
+  if (i > 7) return;
+  Wire.beginTransmission(TCAADDR);
+  Wire.write(1 << i);
+  Wire.endTransmission();  
 }
