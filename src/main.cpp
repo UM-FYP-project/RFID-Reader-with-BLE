@@ -12,7 +12,7 @@ typedef struct
 {
   byte PC[2];
   byte CRC[2];
-  byte Hazzard[4]; // Hazzard + Seq(2Byte) + Optional
+  byte Hazard[4]; // Hazard + Seq(2Byte) + Optional
   byte RSSI;
 } NavTag;
 
@@ -47,15 +47,15 @@ typedef struct
 LRAPara YLRA_5VOL = {B10110110, 0x91, 0xEB, 0x18, B11110101, B10001001, 0x3A};
 
 LRAMove Forward[] = {
-  {0xFF, 10},
-  {0x00, 1},
-  {0x7F, 200},
-  {0xFF, 20},
-  {0x00, 5},
-  {0x7F, 200},
-  {0xFF, 40},
-  {0x00, 5},
-  {0x7F, 200},
+    {0xFF, 10},
+    {0x00, 1},
+    {0x7F, 200},
+    {0xFF, 20},
+    {0x00, 5},
+    {0x7F, 200},
+    {0xFF, 40},
+    {0x00, 5},
+    {0x7F, 200},
 };
 
 SFE_HMD_DRV2605L YLRA;
@@ -102,7 +102,6 @@ uint8_t LRMCounter = 0;
 uint8_t tagsCounter = 0;
 uint8_t FlushCounter = 0;
 uint8_t RoutineCounter = 0;
-
 
 byte length = 0;
 byte from_BLE[60] = {};
@@ -162,7 +161,7 @@ byte checksum(byte buffer[], uint8_t buffer_len);
 void NavTagSort(NavTag array[], uint8_t arrayLen);
 void geoPosSort(geoPos array[], uint8_t arrayLen);
 void DRV2605init(uint8_t channel, SFE_HMD_DRV2605L MOTOR, LRAPara SETTING, byte Mode, byte Library);
-void DRV2605Move(uint8_t channel, SFE_HMD_DRV2605L MOTOR, LRAMove Action);
+void DRV2605Move(uint8_t channel, SFE_HMD_DRV2605L MOTOR, LRAMove Action[]);
 
 void setup()
 {
@@ -238,7 +237,6 @@ void loop()
       }
       if (motorChar.written())
       {
-        
       }
       if (isNavOrSetBLE)
         sendnreveice(from_BLE, length);
@@ -640,7 +638,7 @@ void Arr2Tag(byte array[300], int Length)
           byte PC[2] = {array[i + 7], array[i + 8]};
           byte CRC[2] = {array[i + 6 + ECPLen - 1], array[i + 6 + ECPLen]};
           byte RSSI = array[i + ECPLen + 7];
-          byte Hazzard[4] = {array[i + 13], array[i + 14], array[i + 15], array[i + 16]};
+          byte Hazard[4] = {array[i + 13], array[i + 14], array[i + 15], array[i + 16]};
           for (uint8_t tagIndex = 0; tagIndex < 10; tagIndex++)
           {
             if (NavTags[tagIndex].CRC == CRC && NavTags[tagIndex].PC == PC)
@@ -659,7 +657,7 @@ void Arr2Tag(byte array[300], int Length)
             NavTags[Xindex - 1].RSSI = RSSI;
             memcpy(&NavTags[Xindex - 1].PC, &PC, sizeof(PC));
             memcpy(&NavTags[Xindex - 1].CRC, &CRC, sizeof(CRC));
-            memcpy(&NavTags[Xindex - 1].Hazzard, &Hazzard, sizeof(Hazzard));
+            memcpy(&NavTags[Xindex - 1].Hazard, &Hazard, sizeof(Hazard));
           }
         }
         i += array[i + 1] + 1;
@@ -678,66 +676,55 @@ void Arr2Tag(byte array[300], int Length)
           byte CRC[2] = {array[i + ECPLen + 5], array[i + ECPLen + 6]};
           byte EPC[12] = {};
           // Serial.print("EPC: ");
-          for (int index = 0; index < 12; index++){
+          for (int index = 0; index < 12; index++)
+          {
             EPC[index] = array[index + 9];
-            // Serial.print(EPC[index], HEX);
-            // Serial.print(" ");
           }
           // Serial.print("\n");
           byte DataBL[DataLen] = {};
           // Serial.print("Data: ");
-          for (int index = 0; index < DataLen; index++){
+          for (int index = 0; index < DataLen; index++)
+          {
             DataBL[index] = array[index + ECPLen + 7];
-            // Serial.print(DataBL[index], HEX);
-            // Serial.print(" ");
           }
           // Serial.print("\n");
-          bool isEPCinData = true;
-          if (DataLen > 12)
-          {
-            for (int index = 0; index < 12; index++)
-            {
-              if (EPC[index] != DataBL[index]){
-                isEPCinData = false;
-                break;
-              }
-            }
-          }
           byte Floor[2] = {EPC[2], EPC[3]};
           byte Information[3] = {EPC[8], EPC[9], EPC[10]};
-          byte X[4] = {};
-          byte Y[4] = {};
-          byte Lag[4] = {};
-          byte Long[4] = {};
-          if (isEPCinData)
-          {
-            // byte X[4] = {DataBL[9], DataBL[10], DataBL[11], DataBL[12]};
-            // byte Y[4] = {DataBL[13], DataBL[14], DataBL[15], DataBL[16]};
-            byte Lag[4] = {DataBL[17], DataBL[18], DataBL[19], DataBL[20]};
-            byte Long[4] = {DataBL[21], DataBL[22], DataBL[23], DataBL[24]};
-          }
-          else 
-          {
-            // byte X[4] = {EPC[11], DataBL[0], DataBL[1], DataBL[2]};
-            // byte Y[4] = {DataBL[3], DataBL[4], DataBL[5], DataBL[6]};
-            byte Lag[4] = {DataBL[7], DataBL[8], DataBL[9], DataBL[10]};
-            byte Long[4] = {DataBL[11], DataBL[12], DataBL[13], DataBL[14]};
-          }
+          byte Lag[4] = {DataBL[7], DataBL[8], DataBL[9], DataBL[10]};
+          byte Long[4] = {DataBL[11], DataBL[12], DataBL[13], DataBL[14]};
+          // Serial.print("Lag: ");
+          // Serial.print(Lag[0], HEX);
+          // Serial.print(" ");
+          // Serial.print(Lag[1], HEX);
+          // Serial.print(" ");
+          // Serial.print(Lag[2], HEX);
+          // Serial.print(" ");
+          // Serial.print(Lag[3], HEX);
+          // Serial.print("\n");
+          // Serial.print("Long: ");
+          // Serial.print(Long[0], HEX);
+          // Serial.print(" ");
+          // Serial.print(Long[1], HEX);
+          // Serial.print(" ");
+          // Serial.print(Long[2], HEX);
+          // Serial.print(" ");
+          // Serial.print(Long[3], HEX);
+          // Serial.print("\n");
           Pos[Xindex - 1].RSSI = 0;
+          for (uint8_t tagIndex = 0; tagIndex < 10; tagIndex++)
+          {
+            if (NavTags[tagIndex].CRC[0] == CRC[0] && NavTags[tagIndex].CRC[1] == CRC[1])
+              memcpy(&Pos[Xindex - 1].RSSI, &NavTags[tagIndex].RSSI, sizeof(NavTags[tagIndex].RSSI));
+            if (NavTags[tagIndex].RSSI == 0)
+            {
+              break;
+            }
+          }
           for (uint8_t PosIndex = 0; PosIndex < 10; PosIndex++)
           {
             if (Pos[PosIndex].CRC == CRC && Pos[PosIndex].PC == PC)
             {
               isExisted = true;
-              for (uint8_t tagIndex = 0; tagIndex < 10; tagIndex++)
-              {
-                if (NavTags[tagIndex].CRC == CRC && NavTags[tagIndex].PC == PC)
-                  memcpy(&Pos[Xindex - 1].RSSI, &NavTags[tagIndex].RSSI, sizeof(NavTags[tagIndex].RSSI));
-                if (NavTags[tagIndex].RSSI == 0)
-                {
-                  break;
-                }
-              }
               break;
             }
             if (Pos[PosIndex].RSSI == 0)
@@ -759,7 +746,8 @@ void Arr2Tag(byte array[300], int Length)
       }
     }
   }
-  if (array[0] == 0xA0 && array[2] == 0xFE){
+  if (array[0] == 0xA0 && array[2] == 0xFE)
+  {
     if (array[3] == 0x90 && array[1] > 4)
     {
       NavTagSort(NavTags, Xindex);
@@ -769,7 +757,6 @@ void Arr2Tag(byte array[300], int Length)
       geoPosSort(Pos, Xindex);
     }
   }
-  
 }
 
 void tcaselect(uint8_t i)
@@ -797,22 +784,23 @@ void DRV2605init(uint8_t channel, SFE_HMD_DRV2605L MOTOR, LRAPara SETTING, byte 
   MOTOR.Library(Library);
 }
 
-// void DRV2605Move(uint8_t channel, SFE_HMD_DRV2605L MOTOR, LRAMove Action)
-// {
-//   tcaselect(channel);
-//   if (currentMillis - previousMillis_LRM >= (int)Action[LRMCounter].interval)
-//   {
-//     MOTOR.RTP(Action[LRMCounter].RTP);
-//     LRMCounter += 1;
-//   }
-//   if (LRMCounter > sizeof(Action)/sizeof(Action[0])){
-//     LRMCounter = 0;
-//     if (flagLRM)
-//       flagLRM = false;
-//     if (flagLRMBLE)
-//     flagLRMBLE = false;
-//   }
-// }
+void DRV2605Move(uint8_t channel, SFE_HMD_DRV2605L MOTOR, LRAMove Action[])
+{
+  tcaselect(channel);
+  if (currentMillis - previousMillis_LRM >= Action[LRMCounter].interval)
+  {
+    MOTOR.RTP(Action[LRMCounter].RTP);
+    LRMCounter += 1;
+  }
+  if (LRMCounter > sizeof(Action) / sizeof(Action[0]))
+  {
+    LRMCounter = 0;
+    if (flagLRM)
+      flagLRM = false;
+    if (flagLRMBLE)
+      flagLRMBLE = false;
+  }
+}
 
 void WDTinit(uint8_t wdt)
 {
@@ -849,13 +837,22 @@ void NavTagSort(NavTag array[], uint8_t arrayLen)
   //   Serial.print("|");
   //   Serial.print("NavTag:");
   //   Serial.print(" PC:");
-  //   Serial.print(tagCopy.PC[0],HEX);Serial.print(" "); Serial.print(tagCopy.PC[1],HEX);
+  //   Serial.print(tagCopy.PC[0], HEX);
+  //   Serial.print(" ");
+  //   Serial.print(tagCopy.PC[1], HEX);
   //   Serial.print(" CRC:");
-  //   Serial.print(tagCopy.CRC[0],HEX);Serial.print(" ");Serial.print(tagCopy.CRC[1],HEX);
+  //   Serial.print(tagCopy.CRC[0], HEX);
+  //   Serial.print(" ");
+  //   Serial.print(tagCopy.CRC[1], HEX);
   //   Serial.print(" Hazard:");
-  //   Serial.print(tagCopy.Infor[0],HEX);Serial.print(" ");Serial.print(tagCopy.Infor[1],HEX);
-  //   Serial.print(" ");Serial.print(tagCopy.Seq[0],HEX);Serial.print(" ");Serial.print(tagCopy.Seq[1],HEX);
-  //   Serial.print(" ");Serial.print(tagCopy.Addation,HEX);
+  //   Serial.print(tagCopy.Hazard[0], HEX);
+  //   Serial.print(" ");
+  //   Serial.print(tagCopy.Hazard[1], HEX);
+  //   Serial.print(" ");
+  //   Serial.print(tagCopy.Hazard[2], HEX);
+  //   Serial.print(" ");
+  //   Serial.print(tagCopy.Hazard[3], HEX);
+  //   Serial.print(" ");
   //   Serial.print(" RSSI:");
   //   Serial.print(tagCopy.RSSI - 130);
   //   Serial.print("\n");
@@ -881,4 +878,53 @@ void geoPosSort(geoPos array[], uint8_t arrayLen)
       }
     }
   }
+  // for (int x = 0; x < arrayLen; x++)
+  // {
+  //   geoPos tagCopy;
+  //   memcpy(&tagCopy, &array[x], sizeof(array[x]));
+  //   Serial.print(x);
+  //   Serial.print("|");
+  //   Serial.print("geoPos:");
+  //   Serial.print(" PC:");
+  //   Serial.print(tagCopy.PC[0], HEX);
+  //   Serial.print(" ");
+  //   Serial.print(tagCopy.PC[1], HEX);
+  //   Serial.print(" CRC:");
+  //   Serial.print(tagCopy.CRC[0], HEX);
+  //   Serial.print(" ");
+  //   Serial.print(tagCopy.CRC[1], HEX);
+  //   Serial.print(" Floor:");
+  //   Serial.print(tagCopy.Floor[0], HEX);
+  //   Serial.print(" ");
+  //   Serial.print(tagCopy.Floor[1], HEX);
+  //   Serial.print(" ");
+  //   Serial.print(" Information:");
+  //   Serial.print(tagCopy.Information[0], HEX);
+  //   Serial.print(" ");
+  //   Serial.print(tagCopy.Information[1], HEX);
+  //   Serial.print(" ");
+  //   Serial.print(tagCopy.Information[2], HEX);
+  //   Serial.print(" ");
+  //   Serial.print("\nLag:");
+  //   Serial.print(tagCopy.Lag[0], HEX);
+  //   Serial.print(" ");
+  //   Serial.print(tagCopy.Lag[1], HEX);
+  //   Serial.print(" ");
+  //   Serial.print(tagCopy.Lag[2], HEX);
+  //   Serial.print(" ");
+  //   Serial.print(tagCopy.Lag[3], HEX);
+  //   Serial.print(" ");
+  //   Serial.print(" Long:");
+  //   Serial.print(tagCopy.Long[0], HEX);
+  //   Serial.print(" ");
+  //   Serial.print(tagCopy.Long[1], HEX);
+  //   Serial.print(" ");
+  //   Serial.print(tagCopy.Long[2], HEX);
+  //   Serial.print(" ");
+  //   Serial.print(tagCopy.Long[3], HEX);
+  //   Serial.print(" ");
+  //   Serial.print(" RSSI:");
+  //   Serial.print(tagCopy.RSSI - 130);
+  //   Serial.print("\n");
+  // }
 }
