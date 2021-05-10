@@ -12,9 +12,7 @@ typedef struct
 {
   byte PC[2];
   byte CRC[2];
-  byte Infor[2];
-  byte Seq[2];
-  byte Addation;
+  byte Hazzard[4]; // Hazzard + Seq(2Byte) + Optional
   byte RSSI;
 } NavTag;
 
@@ -23,6 +21,7 @@ typedef struct
   byte PC[2];
   byte CRC[2];
   byte Floor[2];
+  byte Information[3]; // Information + Seq(2Byte)
   byte Lag[4];
   byte Long[4];
   byte RSSI;
@@ -31,7 +30,7 @@ typedef struct
 typedef struct
 {
   byte RTP;
-  uint interval;
+  int interval;
 } LRAMove;
 
 typedef struct
@@ -47,6 +46,18 @@ typedef struct
 
 LRAPara YLRA_5VOL = {B10110110, 0x91, 0xEB, 0x18, B11110101, B10001001, 0x3A};
 
+LRAMove Forward[] = {
+  {0xFF, 10},
+  {0x00, 1},
+  {0x7F, 200},
+  {0xFF, 20},
+  {0x00, 5},
+  {0x7F, 200},
+  {0xFF, 40},
+  {0x00, 5},
+  {0x7F, 200},
+};
+
 SFE_HMD_DRV2605L YLRA;
 SFE_HMD_DRV2605L XLRA;
 
@@ -59,7 +70,7 @@ const char *service_uuid = "2A68";
 const char *toReaderChar_uuid = "7269";
 const char *fromReaderChar_uuid = "726F";
 const char *isNavOrSetChar_uuid = "4676";
-const char *geoPositionChar_uuid = "5677";
+const char *PositionChar_uuid = "5677";
 const char *motorChar_uuid = "4D6F";
 
 //Global Var
@@ -68,6 +79,8 @@ bool BLEnotBegin = false;
 bool isBLEconnected = false;
 bool isNavOrSetBLE = false;
 
+bool flagLRM = false;
+bool flagLRMBLE = false;
 bool firstFlush = false;
 bool flagFlush = false;
 bool flagBLECmd = false;
@@ -75,8 +88,8 @@ bool flagSendCmd = false;
 bool flagRoutine = false;
 bool flagGetData = false;
 bool flagData2BLE = false;
-bool flagNonReading = false;
 bool flagLocalCmd = false;
+bool flagNonReading = false;
 
 int FeedBackIndex = 0;
 int ErrorCounter = 0;
@@ -84,12 +97,16 @@ int ErrorCounter = 0;
 // uint8_t readbyte_flag = 0;
 uint8_t CmdCounter = 0;
 uint8_t RoutineFlow = 0;
+
+uint8_t LRMCounter = 0;
+uint8_t tagsCounter = 0;
 uint8_t FlushCounter = 0;
 uint8_t RoutineCounter = 0;
-uint8_t tagsCounter = 0;
+
 
 byte length = 0;
 byte from_BLE[60] = {};
+byte motor_BLE[2] = {};
 byte FeedBack[300] = {};
 NavTag NavTags[10] = {};
 geoPos Pos[10] = {};
@@ -98,6 +115,7 @@ geoPos Pos[10] = {};
 unsigned long previousMillis_firstFlush = 0;
 
 unsigned long currentMillis = 0;
+unsigned long previousMillis_LRM = 0;
 unsigned long previousMillis_Flush = 0;
 unsigned long previousMillis_NoData = 0;
 unsigned long previousMillis_Forward = 0;
@@ -120,7 +138,7 @@ UART Reader_uart(digitalPinToPinName(3), digitalPinToPinName(2), NC, NC); // TX,
 BLEService INDNAV_BLE(service_uuid);
 BLECharacteristic toReaderChar(toReaderChar_uuid, BLEWrite | BLEWriteWithoutResponse, 60);
 BLECharacteristic fromReaderChar(fromReaderChar_uuid, BLERead | BLENotify, 400);
-BLECharacteristic geoPositionChar(geoPositionChar_uuid, BLERead | BLENotify, 10);
+BLECharacteristic PositionChar(PositionChar_uuid, BLERead | BLENotify, 10);
 BLECharacteristic motorChar(motorChar_uuid, BLEWrite | BLEWriteWithoutResponse, 2);
 BLEBoolCharacteristic isNavOrSetChar(isNavOrSetChar_uuid, BLEWrite | BLEWriteWithoutResponse);
 
@@ -140,9 +158,11 @@ void tcaselect(uint8_t i);
 void Arr2Tag(byte array[300], int Length);
 void sendnreveice(byte cmd[], uint8_t length);
 void cmd2reader(byte cmd[], uint8_t cmd_size);
-void TagSort(NavTag array[], uint8_t arrayLen);
 byte checksum(byte buffer[], uint8_t buffer_len);
+void NavTagSort(NavTag array[], uint8_t arrayLen);
+void geoPosSort(geoPos array[], uint8_t arrayLen);
 void DRV2605init(uint8_t channel, SFE_HMD_DRV2605L MOTOR, LRAPara SETTING, byte Mode, byte Library);
+void DRV2605Move(uint8_t channel, SFE_HMD_DRV2605L MOTOR, LRAMove Action);
 
 void setup()
 {
@@ -164,7 +184,7 @@ void setup()
   // add the characteristic to the service
   INDNAV_BLE.addCharacteristic(toReaderChar);
   INDNAV_BLE.addCharacteristic(fromReaderChar);
-  INDNAV_BLE.addCharacteristic(geoPositionChar);
+  INDNAV_BLE.addCharacteristic(PositionChar);
   INDNAV_BLE.addCharacteristic(motorChar);
   INDNAV_BLE.addCharacteristic(isNavOrSetChar);
   // Battery.addCharacteristic(battery_leveChar);
@@ -218,6 +238,7 @@ void loop()
       }
       if (motorChar.written())
       {
+        
       }
       if (isNavOrSetBLE)
         sendnreveice(from_BLE, length);
@@ -263,7 +284,7 @@ void scanRoutine()
       {
           {0xA0, 0x04, 0xFE, 0x80, 0xFF},
           {0xA0, 0x03, 0xFE, 0x90},
-          {0xA0, 0x06, 0xFE, 0x81, 0x01, 0x08, 0x07},
+          {0xA0, 0x06, 0xFE, 0x81, 0x01, 0x08, 0x08},
           {0xA0, 0x03, 0xFE, 0x93}};
   switch (RoutineFlow)
   {
@@ -274,7 +295,7 @@ void scanRoutine()
     Serial.print(float(previousMillis_RoutineStart / 1000));
     Serial.print("s ");
     Serial.print(RoutineCounter);
-    Serial.print("Error: ");
+    Serial.print(" Error: ");
     Serial.print(ErrorCounter);
     Serial.print("\n");
     RoutineCounter += 1;
@@ -403,10 +424,7 @@ void cmd2reader(byte cmd[], uint8_t cmd_size)
   }
   if (cmd[3] == (byte)0x70)
   {
-    Reader_uart.end();
     digitalWrite(reader_enable_pin, LOW);
-    delay(10);
-    Reader_uart.begin(115200);
     digitalWrite(reader_enable_pin, HIGH);
   }
   if (CmdCounter > 3 || cmd[3] == (byte)0x70 || flagGetData)
@@ -601,6 +619,7 @@ void Arr2Tag(byte array[300], int Length)
   uint8_t Xindex = 0;
   uint8_t Yindex = 0;
   bool flagA0 = false;
+  Serial.println("****Array to DataArray****");
   for (int i = 0; i < Length; i++)
   {
     if (array[i] == 0xA0 && array[i + 2] == 0xFE)
@@ -621,9 +640,7 @@ void Arr2Tag(byte array[300], int Length)
           byte PC[2] = {array[i + 7], array[i + 8]};
           byte CRC[2] = {array[i + 6 + ECPLen - 1], array[i + 6 + ECPLen]};
           byte RSSI = array[i + ECPLen + 7];
-          byte infor[2] = {array[i + 13], array[i + 14]};
-          byte Seq[2] = {array[i + 15], array[i + 16]};
-          byte addition = array[i + 17];
+          byte Hazzard[4] = {array[i + 13], array[i + 14], array[i + 15], array[i + 16]};
           for (uint8_t tagIndex = 0; tagIndex < 10; tagIndex++)
           {
             if (NavTags[tagIndex].CRC == CRC && NavTags[tagIndex].PC == PC)
@@ -640,15 +657,12 @@ void Arr2Tag(byte array[300], int Length)
           if (!isExisted)
           {
             NavTags[Xindex - 1].RSSI = RSSI;
-            NavTags[Xindex - 1].Addation = addition;
             memcpy(&NavTags[Xindex - 1].PC, &PC, sizeof(PC));
             memcpy(&NavTags[Xindex - 1].CRC, &CRC, sizeof(CRC));
-            memcpy(&NavTags[Xindex - 1].Infor, &infor, sizeof(infor));
-            memcpy(&NavTags[Xindex - 1].Seq, &Seq, sizeof(Seq));
+            memcpy(&NavTags[Xindex - 1].Hazzard, &Hazzard, sizeof(Hazzard));
           }
         }
         i += array[i + 1] + 1;
-        TagSort(NavTags, Xindex);
       }
       if (array[i + 3] == 0x81 && array[i + 1] > 4)
       {
@@ -657,13 +671,58 @@ void Arr2Tag(byte array[300], int Length)
         uint8_t ArrLen = array[i + 6];
         uint8_t DataLen = array[array[i + 1] - 2];
         uint8_t ECPLen = ArrLen - DataLen;
+        // Serial.print("0xEC?"); Serial.println(array[array[i + 1] - 3], HEX);
         if (array[i + 9] == 0x4E && array[i + 10] == 0x56 && array[array[i + 1] - 3] == 0xEC)
         {
           byte PC[2] = {array[i + 7], array[i + 8]};
           byte CRC[2] = {array[i + ECPLen + 5], array[i + ECPLen + 6]};
-          byte Floor[2] = {array[i + 11], array[i + 12]};
-          byte Lag[4] = {array[i + ECPLen + 15], array[i + ECPLen + 16], array[i + ECPLen + 17], array[i + ECPLen + 18]};
-          byte Long[4] = {array[i + ECPLen + 19], array[i + ECPLen + 20], array[i + ECPLen + 21], array[i + ECPLen + 22]};
+          byte EPC[12] = {};
+          // Serial.print("EPC: ");
+          for (int index = 0; index < 12; index++){
+            EPC[index] = array[index + 9];
+            // Serial.print(EPC[index], HEX);
+            // Serial.print(" ");
+          }
+          // Serial.print("\n");
+          byte DataBL[DataLen] = {};
+          // Serial.print("Data: ");
+          for (int index = 0; index < DataLen; index++){
+            DataBL[index] = array[index + ECPLen + 7];
+            // Serial.print(DataBL[index], HEX);
+            // Serial.print(" ");
+          }
+          // Serial.print("\n");
+          bool isEPCinData = true;
+          if (DataLen > 12)
+          {
+            for (int index = 0; index < 12; index++)
+            {
+              if (EPC[index] != DataBL[index]){
+                isEPCinData = false;
+                break;
+              }
+            }
+          }
+          byte Floor[2] = {EPC[2], EPC[3]};
+          byte Information[3] = {EPC[8], EPC[9], EPC[10]};
+          byte X[4] = {};
+          byte Y[4] = {};
+          byte Lag[4] = {};
+          byte Long[4] = {};
+          if (isEPCinData)
+          {
+            // byte X[4] = {DataBL[9], DataBL[10], DataBL[11], DataBL[12]};
+            // byte Y[4] = {DataBL[13], DataBL[14], DataBL[15], DataBL[16]};
+            byte Lag[4] = {DataBL[17], DataBL[18], DataBL[19], DataBL[20]};
+            byte Long[4] = {DataBL[21], DataBL[22], DataBL[23], DataBL[24]};
+          }
+          else 
+          {
+            // byte X[4] = {EPC[11], DataBL[0], DataBL[1], DataBL[2]};
+            // byte Y[4] = {DataBL[3], DataBL[4], DataBL[5], DataBL[6]};
+            byte Lag[4] = {DataBL[7], DataBL[8], DataBL[9], DataBL[10]};
+            byte Long[4] = {DataBL[11], DataBL[12], DataBL[13], DataBL[14]};
+          }
           Pos[Xindex - 1].RSSI = 0;
           for (uint8_t PosIndex = 0; PosIndex < 10; PosIndex++)
           {
@@ -691,15 +750,26 @@ void Arr2Tag(byte array[300], int Length)
             memcpy(&Pos[Xindex - 1].PC, &PC, sizeof(PC));
             memcpy(&Pos[Xindex - 1].CRC, &CRC, sizeof(CRC));
             memcpy(&Pos[Xindex - 1].Floor, &Floor, sizeof(Floor));
+            memcpy(&Pos[Xindex - 1].Information, &Information, sizeof(Information));
             memcpy(&Pos[Xindex - 1].Lag, &Lag, sizeof(Lag));
             memcpy(&Pos[Xindex - 1].Long, &Long, sizeof(Long));
           }
         }
         i += array[i + 1] + 1;
       }
-      
     }
   }
+  if (array[0] == 0xA0 && array[2] == 0xFE){
+    if (array[3] == 0x90 && array[1] > 4)
+    {
+      NavTagSort(NavTags, Xindex);
+    }
+    if (array[3] == 0x81 && array[1] > 4)
+    {
+      geoPosSort(Pos, Xindex);
+    }
+  }
+  
 }
 
 void tcaselect(uint8_t i)
@@ -727,6 +797,23 @@ void DRV2605init(uint8_t channel, SFE_HMD_DRV2605L MOTOR, LRAPara SETTING, byte 
   MOTOR.Library(Library);
 }
 
+// void DRV2605Move(uint8_t channel, SFE_HMD_DRV2605L MOTOR, LRAMove Action)
+// {
+//   tcaselect(channel);
+//   if (currentMillis - previousMillis_LRM >= (int)Action[LRMCounter].interval)
+//   {
+//     MOTOR.RTP(Action[LRMCounter].RTP);
+//     LRMCounter += 1;
+//   }
+//   if (LRMCounter > sizeof(Action)/sizeof(Action[0])){
+//     LRMCounter = 0;
+//     if (flagLRM)
+//       flagLRM = false;
+//     if (flagLRMBLE)
+//     flagLRMBLE = false;
+//   }
+// }
+
 void WDTinit(uint8_t wdt)
 {
   NRF_WDT->CONFIG = 0x01;         // Configure WDT to run when CPU is asleep
@@ -735,9 +822,9 @@ void WDTinit(uint8_t wdt)
   NRF_WDT->TASKS_START = 1;       // Start WDT
 }
 
-void TagSort(NavTag array[], uint8_t arrayLen)
+void NavTagSort(NavTag array[], uint8_t arrayLen)
 {
-  Serial.println("****DataArray Sort****");
+  Serial.println("****NavTagArray Sort****");
   for (int i = 0; i < arrayLen; i++)
   {
     for (int j = i + 1; j < arrayLen; j++)
@@ -747,6 +834,46 @@ void TagSort(NavTag array[], uint8_t arrayLen)
         if (array[i].RSSI <= array[j].RSSI)
         {
           NavTag tagCopy;
+          memcpy(&tagCopy, &array[j], sizeof(array[j]));
+          memcpy(&array[j], &array[i], sizeof(array[i]));
+          memcpy(&array[i], &tagCopy, sizeof(tagCopy));
+        }
+      }
+    }
+  }
+  // for (int x = 0; x < arrayLen; x++)
+  // {
+  //   NavTag tagCopy;
+  //   memcpy(&tagCopy, &array[x], sizeof(array[x]));
+  //   Serial.print(x);
+  //   Serial.print("|");
+  //   Serial.print("NavTag:");
+  //   Serial.print(" PC:");
+  //   Serial.print(tagCopy.PC[0],HEX);Serial.print(" "); Serial.print(tagCopy.PC[1],HEX);
+  //   Serial.print(" CRC:");
+  //   Serial.print(tagCopy.CRC[0],HEX);Serial.print(" ");Serial.print(tagCopy.CRC[1],HEX);
+  //   Serial.print(" Hazard:");
+  //   Serial.print(tagCopy.Infor[0],HEX);Serial.print(" ");Serial.print(tagCopy.Infor[1],HEX);
+  //   Serial.print(" ");Serial.print(tagCopy.Seq[0],HEX);Serial.print(" ");Serial.print(tagCopy.Seq[1],HEX);
+  //   Serial.print(" ");Serial.print(tagCopy.Addation,HEX);
+  //   Serial.print(" RSSI:");
+  //   Serial.print(tagCopy.RSSI - 130);
+  //   Serial.print("\n");
+  // }
+}
+
+void geoPosSort(geoPos array[], uint8_t arrayLen)
+{
+  Serial.println("****geoPosSort Sort****");
+  for (int i = 0; i < arrayLen; i++)
+  {
+    for (int j = i + 1; j < arrayLen; j++)
+    {
+      if (array[i].RSSI != 0 && array[j].RSSI != 0)
+      {
+        if (array[i].RSSI <= array[j].RSSI)
+        {
+          geoPos tagCopy;
           memcpy(&tagCopy, &array[j], sizeof(array[j]));
           memcpy(&array[j], &array[i], sizeof(array[i]));
           memcpy(&array[i], &tagCopy, sizeof(tagCopy));
