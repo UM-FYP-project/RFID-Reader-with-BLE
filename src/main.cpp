@@ -94,7 +94,6 @@ bool flagNonReading = false;
 int FeedBackIndex = 0;
 int ErrorCounter = 0;
 
-// uint8_t readbyte_flag = 0;
 uint8_t CmdCounter = 0;
 uint8_t RoutineFlow = 0;
 
@@ -160,8 +159,8 @@ void cmd2reader(byte cmd[], uint8_t cmd_size);
 byte checksum(byte buffer[], uint8_t buffer_len);
 void NavTagSort(NavTag array[], uint8_t arrayLen);
 void geoPosSort(geoPos array[], uint8_t arrayLen);
-void DRV2605init(uint8_t channel, SFE_HMD_DRV2605L MOTOR, LRAPara SETTING, byte Mode, byte Library);
-void DRV2605Move(uint8_t channel, SFE_HMD_DRV2605L MOTOR, LRAMove Action[]);
+void DRV2605init(uint8_t channel, LRAPara SETTING, byte Mode, byte Library);
+void DRV2605Move(uint8_t channel, LRAMove Action[]);
 
 void setup()
 {
@@ -195,8 +194,10 @@ void setup()
   pinMode(13, OUTPUT);
   digitalWrite(reader_enable_pin, HIGH);
   // attachInterrupt(digitalPinToInterrupt(2), triggerReadbyte, CHANGE);
-  WDTinit(20);
+  WDTinit(2);
   flagRoutine = true;
+  // DRV2605init(0, YLRA_5VOL, 0x05, 0x01);
+  // DRV2605init(1, YLRA_5VOL, 0x05, 0x01);
 }
 
 void loop()
@@ -472,21 +473,21 @@ void ReadFeedBack()
     Serial.print("ReadTime: ");
     Serial.print(currentMillis - previousMillis_readStart);
     Serial.print("\n");
-    for (int i = 0; i < FeedBackIndex; i++)
-    {
-      if (FeedBack[i] == (byte)0xA0 && FeedBack[i + 2] == (byte)0xFE)
-      {
-        if (num)
-          Serial.print("\n");
-        num += 1;
-      }
-      String str = (FeedBack[i] > 15) ? "" : "0";
-      Serial.print(str);
-      Serial.print(FeedBack[i], HEX);
-      Serial.print(" ");
-      Reader_uart.read();
-    }
-    Serial.print("\n");
+    // for (int i = 0; i < FeedBackIndex; i++)
+    // {
+    //   if (FeedBack[i] == (byte)0xA0 && FeedBack[i + 2] == (byte)0xFE)
+    //   {
+    //     if (num)
+    //       Serial.print("\n");
+    //     num += 1;
+    //   }
+    //   String str = (FeedBack[i] > 15) ? "" : "0";
+    //   Serial.print(str);
+    //   Serial.print(FeedBack[i], HEX);
+    //   Serial.print(" ");
+    //   Reader_uart.read();
+    // }
+    // Serial.print("\n");
     if (flagRoutine)
     {
       if (RoutineCounter != 0 && RoutineCounter % 10 == 0)
@@ -755,28 +756,49 @@ void tcaselect(uint8_t i)
   Wire.endTransmission();
 }
 
-void DRV2605init(uint8_t channel, SFE_HMD_DRV2605L MOTOR, LRAPara SETTING, byte Mode, byte Library)
+void DRV2605init(uint8_t channel, LRAPara SETTING, byte Mode, byte Library)
 {
   tcaselect(channel);
-  MOTOR.begin();
-  MOTOR.Mode(0x00);
-  MOTOR.ratevolt(SETTING.ratedVolt);
-  MOTOR.clamp(SETTING.ODClamp);
-  MOTOR.MotorSelect(SETTING.FBControl);
-  MOTOR.cntrl1(SETTING.Crtl1);
-  MOTOR.cntrl2(SETTING.Crtl2);
-  MOTOR.cntrl3(SETTING.Crtl3);
-  MOTOR.OLP(SETTING.Period);
-  MOTOR.Mode(Mode);
-  MOTOR.Library(Library);
+  if (!channel)
+  {
+    YLRA.begin();
+    YLRA.Mode(0x00);
+    YLRA.ratevolt(SETTING.ratedVolt);
+    YLRA.clamp(SETTING.ODClamp);
+    YLRA.MotorSelect(SETTING.FBControl);
+    YLRA.cntrl1(SETTING.Crtl1);
+    YLRA.cntrl2(SETTING.Crtl2);
+    YLRA.cntrl3(SETTING.Crtl3);
+    YLRA.OLP(SETTING.Period);
+    YLRA.Mode(Mode);
+    YLRA.Library(Library);
+  }
+  else
+  {
+    XLRA.begin();
+    XLRA.Mode(0x00);
+    XLRA.ratevolt(SETTING.ratedVolt);
+    XLRA.clamp(SETTING.ODClamp);
+    XLRA.MotorSelect(SETTING.FBControl);
+    XLRA.cntrl1(SETTING.Crtl1);
+    XLRA.cntrl2(SETTING.Crtl2);
+    XLRA.cntrl3(SETTING.Crtl3);
+    XLRA.OLP(SETTING.Period);
+    XLRA.Mode(Mode);
+    XLRA.Library(Library);
+  }
+
 }
 
-void DRV2605Move(uint8_t channel, SFE_HMD_DRV2605L MOTOR, LRAMove Action[])
+void DRV2605Move(uint8_t channel, LRAMove Action[])
 {
   tcaselect(channel);
   if (currentMillis - previousMillis_LRM >= Action[LRMCounter].interval)
   {
-    MOTOR.RTP(Action[LRMCounter].RTP);
+    if (!channel)
+      YLRA.RTP(Action[LRMCounter].RTP);
+    else
+      XLRA.RTP(Action[LRMCounter].RTP);
     LRMCounter += 1;
   }
   if (LRMCounter > sizeof(Action) / sizeof(Action[0]))
@@ -816,34 +838,34 @@ void NavTagSort(NavTag array[], uint8_t arrayLen)
       }
     }
   }
-  // for (int x = 0; x < arrayLen; x++)
-  // {
-  //   NavTag tagCopy;
-  //   memcpy(&tagCopy, &array[x], sizeof(array[x]));
-  //   Serial.print(x);
-  //   Serial.print("|");
-  //   Serial.print("NavTag:");
-  //   Serial.print(" PC:");
-  //   Serial.print(tagCopy.PC[0], HEX);
-  //   Serial.print(" ");
-  //   Serial.print(tagCopy.PC[1], HEX);
-  //   Serial.print(" CRC:");
-  //   Serial.print(tagCopy.CRC[0], HEX);
-  //   Serial.print(" ");
-  //   Serial.print(tagCopy.CRC[1], HEX);
-  //   Serial.print(" Hazard:");
-  //   Serial.print(tagCopy.Hazard[0], HEX);
-  //   Serial.print(" ");
-  //   Serial.print(tagCopy.Hazard[1], HEX);
-  //   Serial.print(" ");
-  //   Serial.print(tagCopy.Hazard[2], HEX);
-  //   Serial.print(" ");
-  //   Serial.print(tagCopy.Hazard[3], HEX);
-  //   Serial.print(" ");
-  //   Serial.print(" RSSI:");
-  //   Serial.print(tagCopy.RSSI - 130);
-  //   Serial.print("\n");
-  // }
+  for (int x = 0; x < arrayLen; x++)
+  {
+    NavTag tagCopy;
+    memcpy(&tagCopy, &array[x], sizeof(array[x]));
+    Serial.print(x);
+    Serial.print("|");
+    Serial.print("NavTag:");
+    Serial.print(" PC:");
+    Serial.print(tagCopy.PC[0], HEX);
+    Serial.print(" ");
+    Serial.print(tagCopy.PC[1], HEX);
+    Serial.print(" CRC:");
+    Serial.print(tagCopy.CRC[0], HEX);
+    Serial.print(" ");
+    Serial.print(tagCopy.CRC[1], HEX);
+    Serial.print(" Hazard:");
+    Serial.print(tagCopy.Hazard[0], HEX);
+    Serial.print(" ");
+    Serial.print(tagCopy.Hazard[1], HEX);
+    Serial.print(" ");
+    Serial.print(tagCopy.Hazard[2], HEX);
+    Serial.print(" ");
+    Serial.print(tagCopy.Hazard[3], HEX);
+    Serial.print(" ");
+    Serial.print(" RSSI:");
+    Serial.print(tagCopy.RSSI - 130);
+    Serial.print("\n");
+  }
 }
 
 void geoPosSort(geoPos array[], uint8_t arrayLen)
@@ -865,53 +887,53 @@ void geoPosSort(geoPos array[], uint8_t arrayLen)
       }
     }
   }
-  // for (int x = 0; x < arrayLen; x++)
-  // {
-  //   geoPos tagCopy;
-  //   memcpy(&tagCopy, &array[x], sizeof(array[x]));
-  //   Serial.print(x);
-  //   Serial.print("|");
-  //   Serial.print("geoPos:");
-  //   Serial.print(" PC:");
-  //   Serial.print(tagCopy.PC[0], HEX);
-  //   Serial.print(" ");
-  //   Serial.print(tagCopy.PC[1], HEX);
-  //   Serial.print(" CRC:");
-  //   Serial.print(tagCopy.CRC[0], HEX);
-  //   Serial.print(" ");
-  //   Serial.print(tagCopy.CRC[1], HEX);
-  //   Serial.print(" Floor:");
-  //   Serial.print(tagCopy.Floor[0], HEX);
-  //   Serial.print(" ");
-  //   Serial.print(tagCopy.Floor[1], HEX);
-  //   Serial.print(" ");
-  //   Serial.print(" Information:");
-  //   Serial.print(tagCopy.Information[0], HEX);
-  //   Serial.print(" ");
-  //   Serial.print(tagCopy.Information[1], HEX);
-  //   Serial.print(" ");
-  //   Serial.print(tagCopy.Information[2], HEX);
-  //   Serial.print(" ");
-  //   Serial.print(" Lag:");
-  //   Serial.print(tagCopy.Lag[0], HEX);
-  //   Serial.print(" ");
-  //   Serial.print(tagCopy.Lag[1], HEX);
-  //   Serial.print(" ");
-  //   Serial.print(tagCopy.Lag[2], HEX);
-  //   Serial.print(" ");
-  //   Serial.print(tagCopy.Lag[3], HEX);
-  //   Serial.print(" ");
-  //   Serial.print(" Long:");
-  //   Serial.print(tagCopy.Long[0], HEX);
-  //   Serial.print(" ");
-  //   Serial.print(tagCopy.Long[1], HEX);
-  //   Serial.print(" ");
-  //   Serial.print(tagCopy.Long[2], HEX);
-  //   Serial.print(" ");
-  //   Serial.print(tagCopy.Long[3], HEX);
-  //   Serial.print(" ");
-  //   Serial.print(" RSSI:");
-  //   Serial.print(tagCopy.RSSI - 130);
-  //   Serial.print("\n");
-  // }
+  for (int x = 0; x < arrayLen; x++)
+  {
+    geoPos tagCopy;
+    memcpy(&tagCopy, &array[x], sizeof(array[x]));
+    Serial.print(x);
+    Serial.print("|");
+    Serial.print("geoPos:");
+    Serial.print(" PC:");
+    Serial.print(tagCopy.PC[0], HEX);
+    Serial.print(" ");
+    Serial.print(tagCopy.PC[1], HEX);
+    Serial.print(" CRC:");
+    Serial.print(tagCopy.CRC[0], HEX);
+    Serial.print(" ");
+    Serial.print(tagCopy.CRC[1], HEX);
+    Serial.print(" Floor:");
+    Serial.print(tagCopy.Floor[0], HEX);
+    Serial.print(" ");
+    Serial.print(tagCopy.Floor[1], HEX);
+    Serial.print(" ");
+    Serial.print(" Information:");
+    Serial.print(tagCopy.Information[0], HEX);
+    Serial.print(" ");
+    Serial.print(tagCopy.Information[1], HEX);
+    Serial.print(" ");
+    Serial.print(tagCopy.Information[2], HEX);
+    Serial.print(" ");
+    Serial.print(" Lag:");
+    Serial.print(tagCopy.Lag[0], HEX);
+    Serial.print(" ");
+    Serial.print(tagCopy.Lag[1], HEX);
+    Serial.print(" ");
+    Serial.print(tagCopy.Lag[2], HEX);
+    Serial.print(" ");
+    Serial.print(tagCopy.Lag[3], HEX);
+    Serial.print(" ");
+    Serial.print(" Long:");
+    Serial.print(tagCopy.Long[0], HEX);
+    Serial.print(" ");
+    Serial.print(tagCopy.Long[1], HEX);
+    Serial.print(" ");
+    Serial.print(tagCopy.Long[2], HEX);
+    Serial.print(" ");
+    Serial.print(tagCopy.Long[3], HEX);
+    Serial.print(" ");
+    Serial.print(" RSSI:");
+    Serial.print(tagCopy.RSSI - 130);
+    Serial.print("\n");
+  }
 }
