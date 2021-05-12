@@ -4,8 +4,16 @@
 #include <ArduinoBLE.h>
 #include "wiring_private.h"
 #include <Sparkfun_DRV2605L.h>
+#include <i2c_device_list.h>
+#include <SoftwareI2C.h>
 
-#define TCAADDR 0x70
+#define SOFTI2C_SDA 7
+#define SOFTI2C_SCL 8
+
+#define SOFTIIC_SDA 5
+#define SOFTIIC_SCL 6
+
+// #define TCAADDR 0x70
 
 //type Declatation
 typedef struct
@@ -30,21 +38,29 @@ typedef struct
 typedef struct
 {
   byte RTP;
-  int interval;
+  uint8_t interval;
 } LRAMove;
 
 typedef struct
 {
-  byte FBControl; // for .MotorSelect
+  byte MotorSelect; // for .MotorSelect
   byte ratedVolt; // for .ratevolt
-  byte ODClamp;   // for .clamp
-  byte Crtl1;     // for .cntrl1
-  byte Crtl2;     // for .cntrl2
-  byte Crtl3;     // for .cntrl3
-  byte Period;    // for .OLP
-} LRAPara;
+  byte clamp;   // for .clamp
+  byte cntrl1;     // for .cntrl1
+  byte cntrl2;     // for .cntrl2
+  byte cntrl3;     // for .cntrl3
+  byte OLP;    // for .OLP
+} DRV2605LPara;
 
-LRAPara YLRA_5VOL = {B10110110, 0x91, 0xEB, 0x18, B11110101, B10001001, 0x3A};
+DRV2605LPara XLRA_5VOL = {B10110110, 0x91, 0xEB, 0x18, B11110101, B10001001, 0x3A};
+
+DRV2605LPara XLRA_5VCL = {B10110110, 0x91, 0xEB, 0x18, B11110101, 0x1D, 0x38};
+
+DRV2605LPara YLRA_5VCL = {0xB6, 0x93, 0xE4, 0x1B, B11110101, 0x1D, 0x38};
+
+DRV2605LPara LRA_3VCL = {0xB6, 0x59, 0x9F, 0x1B, B11110101, 0x1D, 0};
+
+DRV2605LPara LRA_3VOL = {0xB6, 0x59, 0x6B, 0x1B, B11110101, B10001001, 0x3F};
 
 LRAMove Forward[] = {
     {0xFF, 10},
@@ -58,8 +74,19 @@ LRAMove Forward[] = {
     {0x7F, 200},
 };
 
-SFE_HMD_DRV2605L YLRA;
-SFE_HMD_DRV2605L XLRA;
+// LRA Declaration
+SFE_HMD_DRV2605L LRA_Y;
+SFE_HMD_DRV2605L LRA_X;
+
+// SoftwareI2C Declaration
+#define SOFTI2C_SDA 7
+#define SOFTI2C_SCL 8
+
+#define SOFTIIC_SDA 5
+#define SOFTIIC_SCL 6
+
+SoftwareI2C _ic;
+SoftwareI2C _iic;
 
 //Pin Declaration
 int reader_enable_pin = 4;
@@ -113,7 +140,7 @@ geoPos Pos[10] = {};
 unsigned long previousMillis_firstFlush = 0;
 
 unsigned long currentMillis = 0;
-unsigned long previousMillis_LRM = 0;
+unsigned long previousMillis_LRA = 0;
 unsigned long previousMillis_Flush = 0;
 unsigned long previousMillis_NoData = 0;
 unsigned long previousMillis_Forward = 0;
@@ -159,7 +186,7 @@ void cmd2reader(byte cmd[], uint8_t cmd_size);
 byte checksum(byte buffer[], uint8_t buffer_len);
 void NavTagSort(NavTag array[], uint8_t arrayLen);
 void geoPosSort(geoPos array[], uint8_t arrayLen);
-void DRV2605init(uint8_t channel, LRAPara SETTING, byte Mode, byte Library);
+void DRV2605Linit(SoftwareI2C _wirei2c, SFE_HMD_DRV2605L MOTOR, DRV2605LPara Para, byte mode, byte lib);
 void DRV2605Move(uint8_t channel, LRAMove Action[]);
 
 void setup()
@@ -198,6 +225,14 @@ void setup()
   flagRoutine = true;
   // DRV2605init(0, YLRA_5VOL, 0x05, 0x01);
   // DRV2605init(1, YLRA_5VOL, 0x05, 0x01);
+  _ic.init(SOFTI2C_SDA, SOFTI2C_SCL); // sda, scl
+  _iic.init(SOFTIIC_SDA, SOFTIIC_SCL); // sda, scl
+  _ic.begin();
+  _iic.begin(); 
+  // DRV2605Linit(_ic, LRA_Y, LRA_3VOL, 0x05, 0x01);
+  // DRV2605Linit(_iic, LRA_X, LRA_3VOL, 0x05, 0x01);
+  DRV2605Linit(_ic, LRA_Y, LRA_3VCL, 0x00, 0x06);
+  DRV2605Linit(_iic, LRA_X, LRA_3VCL, 0x00, 0x06);
 }
 
 void loop()
@@ -247,6 +282,19 @@ void loop()
     scanRoutine();
   if (!flagFlush)
     triggerReadbyte();
+  if (currentMillis - previousMillis_LRA > 1000)
+  {
+    LRA_Y.Waveform(0, 89, _ic);  
+    LRA_Y.Waveform(1, 0, _ic); 
+    LRA_Y.go(_ic);
+    previousMillis_LRA = currentMillis;
+  }
+  if (currentMillis - previousMillis_LRA > 500)
+  {
+    LRA_X.Waveform(0, 89, _iic);  
+    LRA_X.Waveform(1, 0, _iic); 
+    LRA_X.go(_iic);
+  }
 }
 
 void sendnreveice(byte cmd[], uint8_t length)
@@ -747,69 +795,53 @@ void Arr2Tag(byte array[300], int Length)
   }
 }
 
-void tcaselect(uint8_t i)
+// void tcaselect(uint8_t i)
+// {
+//   if (i > 7)
+//     return;
+//   Wire.beginTransmission(TCAADDR);
+//   Wire.write(1 << i);
+//   Wire.endTransmission();
+// }
+
+void DRV2605Linit(SoftwareI2C _wirei2c, SFE_HMD_DRV2605L MOTOR, DRV2605LPara Para, byte mode, byte lib)
 {
-  if (i > 7)
-    return;
-  Wire.beginTransmission(TCAADDR);
-  Wire.write(1 << i);
-  Wire.endTransmission();
+  MOTOR.begin(_wirei2c);
+  MOTOR.Mode(0x00, _wirei2c);
+  MOTOR.ratevolt(Para.ratedVolt, _wirei2c);
+  MOTOR.clamp(Para.clamp, _wirei2c);
+  MOTOR.MotorSelect(Para.MotorSelect, _wirei2c);
+  MOTOR.cntrl1(Para.cntrl1, _wirei2c);
+  MOTOR.cntrl2(Para.cntrl2, _wirei2c);
+  MOTOR.cntrl3(Para.cntrl3, _wirei2c);
+  if(Para.OLP)
+    MOTOR.OLP(Para.OLP, _wirei2c);
+  MOTOR.Mode(mode, _wirei2c);
+  MOTOR.Library(lib, _wirei2c);
 }
 
-void DRV2605init(uint8_t channel, LRAPara SETTING, byte Mode, byte Library)
-{
-  tcaselect(channel);
-  if (!channel)
-  {
-    YLRA.begin();
-    YLRA.Mode(0x00);
-    YLRA.ratevolt(SETTING.ratedVolt);
-    YLRA.clamp(SETTING.ODClamp);
-    YLRA.MotorSelect(SETTING.FBControl);
-    YLRA.cntrl1(SETTING.Crtl1);
-    YLRA.cntrl2(SETTING.Crtl2);
-    YLRA.cntrl3(SETTING.Crtl3);
-    YLRA.OLP(SETTING.Period);
-    YLRA.Mode(Mode);
-    YLRA.Library(Library);
-  }
-  else
-  {
-    XLRA.begin();
-    XLRA.Mode(0x00);
-    XLRA.ratevolt(SETTING.ratedVolt);
-    XLRA.clamp(SETTING.ODClamp);
-    XLRA.MotorSelect(SETTING.FBControl);
-    XLRA.cntrl1(SETTING.Crtl1);
-    XLRA.cntrl2(SETTING.Crtl2);
-    XLRA.cntrl3(SETTING.Crtl3);
-    XLRA.OLP(SETTING.Period);
-    XLRA.Mode(Mode);
-    XLRA.Library(Library);
-  }
+// }
 
-}
-
-void DRV2605Move(uint8_t channel, LRAMove Action[])
-{
-  tcaselect(channel);
-  if (currentMillis - previousMillis_LRM >= Action[LRMCounter].interval)
-  {
-    if (!channel)
-      YLRA.RTP(Action[LRMCounter].RTP);
-    else
-      XLRA.RTP(Action[LRMCounter].RTP);
-    LRMCounter += 1;
-  }
-  if (LRMCounter > sizeof(Action) / sizeof(Action[0]))
-  {
-    LRMCounter = 0;
-    if (flagLRM)
-      flagLRM = false;
-    if (flagLRMBLE)
-      flagLRMBLE = false;
-  }
-}
+// void DRV2605Move(uint8_t channel, LRAMove Action[])
+// {
+//   tcaselect(channel);
+//   if (currentMillis - previousMillis_LRM >= Action[LRMCounter].interval)
+//   {
+//     if (!channel)
+//       YLRA.RTP(Action[LRMCounter].RTP);
+//     else
+//       XLRA.RTP(Action[LRMCounter].RTP);
+//     LRMCounter += 1;
+//   }
+//   if (LRMCounter > sizeof(Action) / sizeof(Action[0]))
+//   {
+//     LRMCounter = 0;
+//     if (flagLRM)
+//       flagLRM = false;
+//     if (flagLRMBLE)
+//       flagLRMBLE = false;
+//   }
+// }
 
 void WDTinit(uint8_t wdt)
 {
