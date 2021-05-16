@@ -42,6 +42,8 @@ typedef struct
   byte CRC[2];
   byte Floor[2];
   byte Information[3]; // Information + Seq(2Byte)
+  byte X[4];
+  byte Y[4];
   byte Lag[4];
   byte Long[4];
   byte RSSI;
@@ -183,7 +185,7 @@ UART Reader_uart(digitalPinToPinName(3), digitalPinToPinName(2), NC, NC); // TX,
 BLEService INDNAV_BLE(service_uuid);
 BLECharacteristic toReaderChar(toReaderChar_uuid, BLEWrite | BLEWriteWithoutResponse, 60);
 BLECharacteristic fromReaderChar(fromReaderChar_uuid, BLERead | BLENotify, 400);
-BLECharacteristic PositionChar(PositionChar_uuid, BLERead | BLENotify, 13);
+BLECharacteristic PositionChar(PositionChar_uuid, BLERead | BLENotify, 21);
 BLECharacteristic motorChar(motorChar_uuid, BLEWrite | BLEWriteWithoutResponse, 2);
 BLEByteCharacteristic isNavOrSetChar(isNavOrSetChar_uuid, BLEWrite | BLEWriteWithoutResponse);
 
@@ -313,6 +315,8 @@ void loop()
       {
         isNavOrSetBLE = (isNavOrSetChar.value() ? true : false);
         flagRoutine = !isNavOrSetBLE;
+        flagNav = (isNavOrSetChar.value() == 2 ? true : false);
+        // if (flagNav)
       }
       if (motorChar.written())
       {
@@ -326,7 +330,7 @@ void loop()
     isBLEconnected = false;
     flagRoutine = true;
   }
-  if (flagRoutine)
+  if (flagRoutine || flagNav)
     scanRoutine();
   if (!flagFlush)
     triggerReadbyte();
@@ -433,36 +437,13 @@ void scanRoutine()
       }
       else
       {
-        RoutineFlow = 5;
+        RoutineFlow = 7;
       }
     }
     sendnreveice(cmd[1], 4);
     break;
   case 5:
-    if (currentMillis - previousMillis_Routine >= 100)
-    {
-      if (!flagLocalCmd)
-      {
-        flagSendCmd = true;
-        flagLocalCmd = true;
-        DEBUG_PRINT("RoutineFlow:");
-        DEBUG_PRINT(RoutineFlow);
-        DEBUG_PRINT("\n");
-      }
-      previousMillis_Routine = currentMillis;
-    }
-    sendnreveice(cmd[3], 4);
-    break;
   case 6:
-    DEBUG_PRINT("Scan Routine End:");
-    DEBUG_PRINT((float(currentMillis - previousMillis_RoutineStart) / 1000));
-    DEBUG_PRINT("s\n");
-    DEBUG_PRINTLN("----------------------------------------------------------------");
-    RoutineFlow = 0;
-    tagsCounter = 0;
-    break;
-  case 10:
-  case 11:
     if (currentMillis - previousMillis_Routine >= 200)
     {
       if (tagsCounter)
@@ -479,11 +460,34 @@ void scanRoutine()
       }
       else
       {
-        RoutineFlow = 5;
+        RoutineFlow = 7;
       }
       previousMillis_Routine = currentMillis;
     }
     sendnreveice(cmd[2], 7);
+    break;
+  case 7:
+    if (currentMillis - previousMillis_Routine >= 100)
+    {
+      if (!flagLocalCmd)
+      {
+        flagSendCmd = true;
+        flagLocalCmd = true;
+        DEBUG_PRINT("RoutineFlow:");
+        DEBUG_PRINT(RoutineFlow);
+        DEBUG_PRINT("\n");
+      }
+      previousMillis_Routine = currentMillis;
+    }
+    sendnreveice(cmd[3], 4);
+    break;
+  case 8:
+    DEBUG_PRINT("Scan Routine End:");
+    DEBUG_PRINT((float(currentMillis - previousMillis_RoutineStart) / 1000));
+    DEBUG_PRINT("s\n");
+    DEBUG_PRINTLN("----------------------------------------------------------------");
+    RoutineFlow = 0;
+    tagsCounter = 0;
     break;
   default:
     break;
@@ -590,26 +594,30 @@ void ReadFeedBack()
     }
     DEBUG_PRINT("\n");
 #endif // DEBUG
-    if (flagRoutine)
+    if (flagRoutine || flagNav)
     {
-      if (RoutineCounter != 0 && RoutineCounter % 10 == 0)
-      {
-        RoutineFlow = (RoutineFlow > 2 && RoutineFlow < 5 ? 10 : RoutineFlow == 5 ? 0 : RoutineFlow + 1);
-        RoutineFlow = (RoutineFlow > 11 ? 0 : RoutineFlow);
-      }
-      else
-        RoutineFlow = (RoutineFlow > 6 ? 0 : RoutineFlow + 1);
+      // if (RoutineCounter != 0 && RoutineCounter % 10 == 0)
+      // {
+      //   // RoutineFlow = (RoutineFlow > 2 && RoutineFlow < 5 ? 10 : RoutineFlow == 5 ? 0 : RoutineFlow + 1);
+      //   // RoutineFlow = (RoutineFlow > 11 ? 0 : RoutineFlow);
+      //   // RoutineFlow = (RoutineFlow > 8 ? 0 : RoutineFlow);
+      // }
+      // else
+      RoutineFlow = (RoutineFlow > 8 ? 0 : RoutineFlow + 1);
     }
     if (FeedBack[0] == (byte)0xA0 && FeedBack[2] == (byte)0xFE)
     {
-      if (!flagRoutine)
-        flagData2BLE = true;
-      else
-      {
-        if (FeedBack[1] > 4 && FeedBack[3] == (byte)0x80)
+      if (FeedBack[1] > 4 && FeedBack[3] == (byte)0x80)
         {
           tagsCounter = FeedBack[6];
         }
+      //   flagData2BLE = true;
+      if (!flagRoutine)
+      {
+        flagData2BLE = true;
+      }
+      else
+      {
         if (FeedBack[1] > 4 && (FeedBack[3] == (byte)0x81 || FeedBack[3] == (byte)0x90))
         {
           Arr2Tag(FeedBack, FeedBackIndex);
@@ -798,6 +806,8 @@ void Arr2Tag(byte array[300], int Length)
           // DEBUG_PRINT("\n");
           byte Floor[2] = {EPC[2], EPC[3]};
           byte Information[3] = {EPC[8], EPC[9], EPC[10]};
+          byte X[4] = {EPC[11], DataBL[0], DataBL[1], DataBL[2]};
+          byte Y[4] = {DataBL[3], DataBL[4], DataBL[5], DataBL[6]};
           byte Lag[4] = {DataBL[7], DataBL[8], DataBL[9], DataBL[10]};
           byte Long[4] = {DataBL[11], DataBL[12], DataBL[13], DataBL[14]};
           Pos[Xindex - 1].RSSI = 0;
@@ -824,6 +834,8 @@ void Arr2Tag(byte array[300], int Length)
             memcpy(&Pos[Xindex - 1].CRC, &CRC, sizeof(CRC));
             memcpy(&Pos[Xindex - 1].Floor, &Floor, sizeof(Floor));
             memcpy(&Pos[Xindex - 1].Information, &Information, sizeof(Information));
+            memcpy(&Pos[Xindex - 1].X, &X, sizeof(X));
+            memcpy(&Pos[Xindex - 1].Y, &Y, sizeof(Y));
             memcpy(&Pos[Xindex - 1].Lag, &Lag, sizeof(Lag));
             memcpy(&Pos[Xindex - 1].Long, &Long, sizeof(Long));
           }
@@ -899,7 +911,6 @@ bool DRV2605LAcalVerify(SoftwareI2C _wirei2c, SFE_HMD_DRV2605L MOTOR, byte Mode,
   }
   return false;
 }
-
 
 // }
 
@@ -1006,12 +1017,14 @@ void geoPosSort(geoPos array[], uint8_t arrayLen)
   {
     geoPos tagCopy;
     memcpy(&tagCopy, &array[0], sizeof(array[0]));
-    byte Pos[13] = {};
+    byte Pos[21] = {};
     memcpy(Pos, tagCopy.Floor, 2 * sizeof(byte));
     memcpy(Pos + 2, tagCopy.Information, 3 * sizeof(byte));
-    memcpy(Pos + 2 + 3, tagCopy.Lag, 4 * sizeof(byte));
-    memcpy(Pos + 2 + 3 + 4, tagCopy.Long, 4 * sizeof(byte));
-    PositionChar.writeValue(Pos, 13);
+    memcpy(Pos + 2 + 3, tagCopy.X, 4 * sizeof(byte));
+    memcpy(Pos + 2 + 3 + 4, tagCopy.Y, 4 * sizeof(byte));
+    memcpy(Pos + 2 + 3 + 4 + 4, tagCopy.Lag, 4 * sizeof(byte));
+    memcpy(Pos + 2 + 3 + 4 + 4 + 4, tagCopy.Long, 4 * sizeof(byte));
+    PositionChar.writeValue(Pos, 21);
   }
 
 #ifdef DEBUG
@@ -1041,6 +1054,24 @@ void geoPosSort(geoPos array[], uint8_t arrayLen)
     DEBUG_PRINTHEX(tagCopy.Information[1]);
     DEBUG_PRINT(" ");
     DEBUG_PRINTHEX(tagCopy.Information[2]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINT(" X:");
+    DEBUG_PRINTHEX(tagCopy.X[0]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINTHEX(tagCopy.X[1]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINTHEX(tagCopy.X[2]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINTHEX(tagCopy.X[3]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINT(" Y:");
+    DEBUG_PRINTHEX(tagCopy.Y[0]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINTHEX(tagCopy.Y[1]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINTHEX(tagCopy.Y[2]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINTHEX(tagCopy.Y[3]);
     DEBUG_PRINT(" ");
     DEBUG_PRINT(" Lag:");
     DEBUG_PRINTHEX(tagCopy.Lag[0]);
