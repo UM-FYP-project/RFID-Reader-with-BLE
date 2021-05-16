@@ -13,6 +13,18 @@
 #define SOFTIIC_SDA 5
 #define SOFTIIC_SCL 6
 
+#define DEBUG
+
+#ifdef DEBUG
+#define DEBUG_PRINT(x) Serial.print(x)
+#define DEBUG_PRINTHEX(x) Serial.print(x, HEX)
+#define DEBUG_PRINTLN(x) Serial.println(x)
+#else
+#define DEBUG_PRINT(x)
+#define DEBUG_PRINTDEC(x)
+#define DEBUG_PRINTLN(x)
+#endif
+
 // #define TCAADDR 0x70
 
 //type Declatation
@@ -44,23 +56,28 @@ typedef struct
 typedef struct
 {
   byte MotorSelect; // for .MotorSelect
-  byte ratedVolt; // for .ratevolt
-  byte clamp;   // for .clamp
-  byte cntrl1;     // for .cntrl1
-  byte cntrl2;     // for .cntrl2
-  byte cntrl3;     // for .cntrl3
-  byte OLP;    // for .OLP
+  byte ratedVolt;   // for .ratevolt
+  byte clamp;       // for .clamp
+  byte cntrl1;      // for .cntrl1
+  byte cntrl2;      // for .cntrl2
+  byte cntrl3;      // for .cntrl3
+  byte cntrl4;      // for .cntrl4
+  byte OLP;         // for .OLP
 } DRV2605LPara;
 
-DRV2605LPara XLRA_5VOL = {B10110110, 0x91, 0xEB, 0x18, B11110101, B10001001, 0x3A};
+// DRV2605LPara XLRA_5VOL = {B10110110, 0x91, 0xEB, 0x18, B11110101, B10001001, 0, 0x3A};
 
-DRV2605LPara XLRA_5VCL = {B10110110, 0x91, 0xEB, 0x18, B11110101, 0x1D, 0x38};
+// DRV2605LPara XLRA_5VCL = {B10110110, 0x91, 0xEB, 0x18, B11110101, 0x1D, 0, 0x38};
 
-DRV2605LPara YLRA_5VCL = {0xB6, 0x93, 0xE4, 0x1B, B11110101, 0x1D, 0x38};
+// DRV2605LPara YLRA_5VCL = {0xB6, 0x93, 0xE4, 0x1B, B11110101, 0x1D, 0, 0x38};
 
-DRV2605LPara LRA_3VCL = {0xB6, 0x59, 0x9F, 0x1B, B11110101, 0x1D, 0};
+// DRV2605LPara LRA_3VCL = {0xB6, 0x59, 0x9F, 0x1B, B11110101, 0x1D, 0, 0};
 
-DRV2605LPara LRA_3VOL = {0xB6, 0x59, 0x6B, 0x1B, B11110101, B10001001, 0x3F};
+// DRV2605LPara LRA_3VOL = {0xB6, 0x59, 0x6B, 0x1B, B11110101, B10001001, 0, 0x5D};
+
+DRV2605LPara LRAY_3VCL = {0xB6, 0x59, 0xA0, 0x9A, 0xF5, 0x80, 0x20, 0x3F};
+
+DRV2605LPara LRAX_3VCL = {0xB6, 0x58, 0xA0, 0x97, 0xF5, 0x80, 0x20, 0x3A};
 
 LRAMove Forward[] = {
     {0xFF, 10},
@@ -106,6 +123,7 @@ bool BLEnotBegin = false;
 bool isBLEconnected = false;
 bool isNavOrSetBLE = false;
 
+bool flagNav = false;
 bool flagLRM = false;
 bool flagLRMBLE = false;
 bool firstFlush = false;
@@ -117,6 +135,8 @@ bool flagGetData = false;
 bool flagData2BLE = false;
 bool flagLocalCmd = false;
 bool flagNonReading = false;
+bool flag_ACalY = false;
+bool flag_ACalX = false;
 
 int FeedBackIndex = 0;
 int ErrorCounter = 0;
@@ -163,9 +183,9 @@ UART Reader_uart(digitalPinToPinName(3), digitalPinToPinName(2), NC, NC); // TX,
 BLEService INDNAV_BLE(service_uuid);
 BLECharacteristic toReaderChar(toReaderChar_uuid, BLEWrite | BLEWriteWithoutResponse, 60);
 BLECharacteristic fromReaderChar(fromReaderChar_uuid, BLERead | BLENotify, 400);
-BLECharacteristic PositionChar(PositionChar_uuid, BLERead | BLENotify, 10);
+BLECharacteristic PositionChar(PositionChar_uuid, BLERead | BLENotify, 13);
 BLECharacteristic motorChar(motorChar_uuid, BLEWrite | BLEWriteWithoutResponse, 2);
-BLEBoolCharacteristic isNavOrSetChar(isNavOrSetChar_uuid, BLEWrite | BLEWriteWithoutResponse);
+BLEByteCharacteristic isNavOrSetChar(isNavOrSetChar_uuid, BLEWrite | BLEWriteWithoutResponse);
 
 // BLEService Battery(battery_levelSer_uuid);
 // BLEByteCharacteristic battery_leveChar(battery_levelSer_uuid, BLERead | BLENotify);
@@ -186,16 +206,19 @@ void cmd2reader(byte cmd[], uint8_t cmd_size);
 byte checksum(byte buffer[], uint8_t buffer_len);
 void NavTagSort(NavTag array[], uint8_t arrayLen);
 void geoPosSort(geoPos array[], uint8_t arrayLen);
-void DRV2605Linit(SoftwareI2C _wirei2c, SFE_HMD_DRV2605L MOTOR, DRV2605LPara Para, byte mode, byte lib);
+void DRV2605Linit(SoftwareI2C _wirei2c, SFE_HMD_DRV2605L MOTOR, DRV2605LPara Para);
 void DRV2605Move(uint8_t channel, LRAMove Action[]);
+bool DRV2605LAcalVerify(SoftwareI2C _wirei2c, SFE_HMD_DRV2605L MOTOR, byte Mode, byte Lib, String Name);
 
 void setup()
 {
   // put your setup code here, to run once:
   // Start I2C
   Wire.begin();
-  // Start Serail
+// Start Serail
+#ifdef DEBUG
   Serial.begin(115200);
+#endif // DEBUG
   Reader_uart.begin(115200);
   //Initializes the BLE device
   if (!BLE.begin())
@@ -225,14 +248,14 @@ void setup()
   flagRoutine = true;
   // DRV2605init(0, YLRA_5VOL, 0x05, 0x01);
   // DRV2605init(1, YLRA_5VOL, 0x05, 0x01);
-  _ic.init(SOFTI2C_SDA, SOFTI2C_SCL); // sda, scl
+  _ic.init(SOFTI2C_SDA, SOFTI2C_SCL);  // sda, scl
   _iic.init(SOFTIIC_SDA, SOFTIIC_SCL); // sda, scl
   _ic.begin();
-  _iic.begin(); 
+  _iic.begin();
   // DRV2605Linit(_ic, LRA_Y, LRA_3VOL, 0x05, 0x01);
   // DRV2605Linit(_iic, LRA_X, LRA_3VOL, 0x05, 0x01);
-  DRV2605Linit(_ic, LRA_Y, LRA_3VCL, 0x00, 0x06);
-  DRV2605Linit(_iic, LRA_X, LRA_3VCL, 0x00, 0x06);
+  DRV2605Linit(_ic, LRA_Y, LRAY_3VCL);
+  DRV2605Linit(_iic, LRA_X, LRAX_3VCL);
 }
 
 void loop()
@@ -243,14 +266,34 @@ void loop()
   currentMicros = micros();
   // put your main code here, to run repeatedly:
   LEDBlink();
+
+  if (!flag_ACalY)
+  {
+    bool LRA_YACal = DRV2605LAcalVerify(_ic, LRA_Y, 0x00, 0x06, "LRA_Y");
+    if (LRA_YACal)
+    {
+      flag_ACalY = true;
+    }
+  }
+  if (!flag_ACalX)
+  {
+    bool LRA_XACal = DRV2605LAcalVerify(_iic, LRA_X, 0x00, 0x06, "LRA_X");
+    if (LRA_XACal)
+    {
+      flag_ACalX = true;
+    }
+  }
   // listen for BLE peripherals to connect:
   BLEDevice central = BLE.central();
+  // isBLEconnected = (central ? true : false);
   if (central)
   {
     // Only send data if we are connected to a central device.
-    isBLEconnected = (central.connected() ? true : false);
+    // isBLEconnected = (central.connected() ? true : false);
     if (central.connected())
     {
+      // DEBUG_PRINTLN("BLE IS CONNECTED");
+      isBLEconnected = true;
       if (!flagBLECmd)
         memset(from_BLE, 0, sizeof(from_BLE));
       if (toReaderChar.written())
@@ -278,23 +321,31 @@ void loop()
         sendnreveice(from_BLE, length);
     }
   }
-  if (flagRoutine && !isBLEconnected)
+  else
+  {
+    isBLEconnected = false;
+    flagRoutine = true;
+  }
+  if (flagRoutine)
     scanRoutine();
   if (!flagFlush)
     triggerReadbyte();
-  if (currentMillis - previousMillis_LRA > 1000)
-  {
-    LRA_Y.Waveform(0, 89, _ic);  
-    LRA_Y.Waveform(1, 0, _ic); 
-    LRA_Y.go(_ic);
-    previousMillis_LRA = currentMillis;
-  }
-  if (currentMillis - previousMillis_LRA > 500)
-  {
-    LRA_X.Waveform(0, 89, _iic);  
-    LRA_X.Waveform(1, 0, _iic); 
-    LRA_X.go(_iic);
-  }
+  // if (currentMillis - previousMillis_LRA > 1000)
+  // {
+  //   // LRA_Y.stop(_iic);
+  //   LRA_Y.Waveform(0, 89, _ic);
+  //   // LRA_Y.Waveform(1, 24, _ic);
+  //   LRA_Y.Waveform(1, 0, _ic);
+  //   LRA_Y.go(_ic);
+  //   previousMillis_LRA = currentMillis;
+  // }
+  // if (currentMillis - previousMillis_LRA > 500)
+  // {
+  //   // LRA_Y.stop(_ic);
+  //   LRA_X.Waveform(0, 89, _iic);
+  //   LRA_X.Waveform(1, 0, _iic);
+  //   LRA_X.go(_iic);
+  // }
 }
 
 void sendnreveice(byte cmd[], uint8_t length)
@@ -309,7 +360,7 @@ void sendnreveice(byte cmd[], uint8_t length)
     {
       if (isBLEconnected)
       {
-        fromReaderChar.writeValue(FeedBack, FeedBackIndex, true);
+        fromReaderChar.writeValue(FeedBack, FeedBackIndex);
       }
       flagData2BLE = false;
     }
@@ -337,14 +388,14 @@ void scanRoutine()
   {
   case 0:
     previousMillis_RoutineStart = currentMillis;
-    Serial.println("----------------------------------------------------------------");
-    Serial.print("\nScan Routine Start Time:");
-    Serial.print(float(previousMillis_RoutineStart / 1000));
-    Serial.print("s ");
-    Serial.print(RoutineCounter);
-    Serial.print(" Error: ");
-    Serial.print(ErrorCounter);
-    Serial.print("\n");
+    DEBUG_PRINTLN("----------------------------------------------------------------");
+    DEBUG_PRINT("\nScan Routine Start Time:");
+    DEBUG_PRINT(float(previousMillis_RoutineStart / 1000));
+    DEBUG_PRINT("s ");
+    DEBUG_PRINT(RoutineCounter);
+    DEBUG_PRINT(" Error: ");
+    DEBUG_PRINT(ErrorCounter);
+    DEBUG_PRINT("\n");
     RoutineCounter += 1;
     RoutineFlow = 1;
     break;
@@ -356,9 +407,9 @@ void scanRoutine()
       {
         flagSendCmd = true;
         flagLocalCmd = true;
-        Serial.print("RoutineFlow:");
-        Serial.print(RoutineFlow);
-        Serial.print("\n");
+        DEBUG_PRINT("RoutineFlow:");
+        DEBUG_PRINT(RoutineFlow);
+        DEBUG_PRINT("\n");
       }
       previousMillis_Routine = currentMillis;
     }
@@ -374,9 +425,9 @@ void scanRoutine()
         {
           flagSendCmd = true;
           flagLocalCmd = true;
-          Serial.print("RoutineFlow:");
-          Serial.print(RoutineFlow);
-          Serial.print("\n");
+          DEBUG_PRINT("RoutineFlow:");
+          DEBUG_PRINT(RoutineFlow);
+          DEBUG_PRINT("\n");
         }
         previousMillis_Routine = currentMillis;
       }
@@ -394,19 +445,19 @@ void scanRoutine()
       {
         flagSendCmd = true;
         flagLocalCmd = true;
-        Serial.print("RoutineFlow:");
-        Serial.print(RoutineFlow);
-        Serial.print("\n");
+        DEBUG_PRINT("RoutineFlow:");
+        DEBUG_PRINT(RoutineFlow);
+        DEBUG_PRINT("\n");
       }
       previousMillis_Routine = currentMillis;
     }
     sendnreveice(cmd[3], 4);
     break;
   case 6:
-    Serial.print("Scan Routine End:");
-    Serial.print((float(currentMillis - previousMillis_RoutineStart) / 1000));
-    Serial.print("s\n");
-    Serial.println("----------------------------------------------------------------");
+    DEBUG_PRINT("Scan Routine End:");
+    DEBUG_PRINT((float(currentMillis - previousMillis_RoutineStart) / 1000));
+    DEBUG_PRINT("s\n");
+    DEBUG_PRINTLN("----------------------------------------------------------------");
     RoutineFlow = 0;
     tagsCounter = 0;
     break;
@@ -420,9 +471,9 @@ void scanRoutine()
         {
           flagSendCmd = true;
           flagLocalCmd = true;
-          Serial.print("RoutineFlow:");
-          Serial.print(RoutineFlow);
-          Serial.print("\n");
+          DEBUG_PRINT("RoutineFlow:");
+          DEBUG_PRINT(RoutineFlow);
+          DEBUG_PRINT("\n");
         }
         previousMillis_Routine = currentMillis;
       }
@@ -448,21 +499,22 @@ void cmd2reader(byte cmd[], uint8_t cmd_size)
     {
       cmd[cmd_size] = checksum(cmd, cmd_size);
     }
-    Serial.println("****Send Cmd to Read****");
+    DEBUG_PRINTLN("****Send Cmd to Read****");
+#ifdef DEBUG
     for (int i = 0; i < buffer_len; i++)
     {
       String str = (cmd[i] > 15) ? "" : "0";
-      Serial.print(str);
-      Serial.print(cmd[i], HEX);
-      Serial.print(" ");
+      DEBUG_PRINT(str);
+      DEBUG_PRINTHEX(cmd[i]);
+      DEBUG_PRINT(" ");
     }
-    Serial.print("\n");
+    DEBUG_PRINT("\n");
+#endif // DEBUG
   }
   //
   if (currentMillis - previousMillis_cmd2reader >= 10)
   {
     Reader_uart.write(cmd, buffer_len);
-    // Serial.print(" Sent\n");
     previousMillis_cmd2reader = currentMillis;
     if (cmd[3] != (byte)0x70)
     {
@@ -490,7 +542,7 @@ void ReadFeedBack()
   uint8_t ReadingRate = 1;   // in Microseconds
   if (!FeedBackIndex)
   {
-    Serial.print("****Cmd from Reader****\n");
+    DEBUG_PRINT("****Cmd from Reader****\n");
     previousMillis_readStart = currentMillis;
     previousMillis_NoData = currentMillis;
   }
@@ -518,24 +570,26 @@ void ReadFeedBack()
   if ((currentMillis - previousMillis_NotReading > interval && (!Reader_uart.available())))
   {
     uint8_t num = 0;
-    Serial.print("ReadTime: ");
-    Serial.print(currentMillis - previousMillis_readStart);
-    Serial.print("\n");
-    // for (int i = 0; i < FeedBackIndex; i++)
-    // {
-    //   if (FeedBack[i] == (byte)0xA0 && FeedBack[i + 2] == (byte)0xFE)
-    //   {
-    //     if (num)
-    //       Serial.print("\n");
-    //     num += 1;
-    //   }
-    //   String str = (FeedBack[i] > 15) ? "" : "0";
-    //   Serial.print(str);
-    //   Serial.print(FeedBack[i], HEX);
-    //   Serial.print(" ");
-    //   Reader_uart.read();
-    // }
-    // Serial.print("\n");
+    DEBUG_PRINT("ReadTime: ");
+    DEBUG_PRINT(currentMillis - previousMillis_readStart);
+    DEBUG_PRINT("\n");
+#ifdef DEBUG
+    for (int i = 0; i < FeedBackIndex; i++)
+    {
+      if (FeedBack[i] == (byte)0xA0 && FeedBack[i + 2] == (byte)0xFE)
+      {
+        if (num)
+          DEBUG_PRINT("\n");
+        num += 1;
+      }
+      String str = (FeedBack[i] > 15) ? "" : "0";
+      DEBUG_PRINT(str);
+      DEBUG_PRINTHEX(FeedBack[i]);
+      DEBUG_PRINT(" ");
+      Reader_uart.read();
+    }
+    DEBUG_PRINT("\n");
+#endif // DEBUG
     if (flagRoutine)
     {
       if (RoutineCounter != 0 && RoutineCounter % 10 == 0)
@@ -571,7 +625,7 @@ void ReadFeedBack()
   }
   if (currentMillis - previousMillis_NoData > Endinterval && (!Reader_uart.available()))
   {
-    Serial.print(" 2\n");
+    DEBUG_PRINT(" 2\n");
     FeedBackIndex = 0;
     flagGetData = false;
     flagNonReading = false;
@@ -630,11 +684,11 @@ void UartFlush()
     firstFlush = true;
     previousMillis_firstFlush = currentMillis;
   }
-  Serial.print("First Flushing Appeared on ");
-  Serial.print(previousMillis_firstFlush / 1000);
-  Serial.print("s CurrentTime:");
-  Serial.print(float(currentMillis / 1000));
-  Serial.print("\n");
+  DEBUG_PRINT("First Flushing Appeared on ");
+  DEBUG_PRINT(previousMillis_firstFlush / 1000);
+  DEBUG_PRINT("s CurrentTime:");
+  DEBUG_PRINT(float(currentMillis / 1000));
+  DEBUG_PRINT("\n");
   while (true)
   {
     currentMillis = millis();
@@ -644,15 +698,15 @@ void UartFlush()
       // Reader_uart.write(cmd, 5);
       while (Reader_uart.read() >= 0)
       {
-        Serial.print("Flushing|");
+        DEBUG_PRINT("Flushing|");
       }
-      // Serial.print(FlushCounter);
+      // DEBUG_PRINT(FlushCounter);
       FlushCounter++;
       previousMillis_Flush = currentMillis;
     }
     if (FlushCounter > 10)
     {
-      Serial.print("\n");
+      DEBUG_PRINT("\n");
       FlushCounter = 0;
       ErrorCounter += 1;
       flagFlush = false;
@@ -666,7 +720,7 @@ void Arr2Tag(byte array[300], int Length)
   uint8_t Xindex = 0;
   uint8_t Yindex = 0;
   bool flagA0 = false;
-  Serial.println("****Array to DataArray****");
+  DEBUG_PRINTLN("****Array to DataArray****");
   for (int i = 0; i < Length; i++)
   {
     if (array[i] == 0xA0 && array[i + 2] == 0xFE)
@@ -727,21 +781,21 @@ void Arr2Tag(byte array[300], int Length)
           byte PC[2] = {array[i + 7], array[i + 8]};
           byte CRC[2] = {array[i + EPCLen + 5], array[i + EPCLen + 6]};
           byte EPC[12] = {};
-          // Serial.print("EPC: ");
+          // DEBUG_PRINT("EPC: ");
           memcpy(EPC, array + 9, (byte)EPCLen);
           // for (int index = 0; index < 12; index++)
           // {
           //   EPC[index] = array[index + 9];
           // }
-          // Serial.print("\n");
+          // DEBUG_PRINT("\n");
           byte DataBL[DataLen] = {};
           memcpy(DataBL, array + EPCLen + 7, (byte)DataLen);
-          // Serial.print("Data: ");
+          // DEBUG_PRINT("Data: ");
           // for (int index = 0; index < DataLen; index++)
           // {
           //   DataBL[index] = array[index + EPCLen + 7];
           // }
-          // Serial.print("\n");
+          // DEBUG_PRINT("\n");
           byte Floor[2] = {EPC[2], EPC[3]};
           byte Information[3] = {EPC[8], EPC[9], EPC[10]};
           byte Lag[4] = {DataBL[7], DataBL[8], DataBL[9], DataBL[10]};
@@ -795,16 +849,7 @@ void Arr2Tag(byte array[300], int Length)
   }
 }
 
-// void tcaselect(uint8_t i)
-// {
-//   if (i > 7)
-//     return;
-//   Wire.beginTransmission(TCAADDR);
-//   Wire.write(1 << i);
-//   Wire.endTransmission();
-// }
-
-void DRV2605Linit(SoftwareI2C _wirei2c, SFE_HMD_DRV2605L MOTOR, DRV2605LPara Para, byte mode, byte lib)
+void DRV2605Linit(SoftwareI2C _wirei2c, SFE_HMD_DRV2605L MOTOR, DRV2605LPara Para)
 {
   MOTOR.begin(_wirei2c);
   MOTOR.Mode(0x00, _wirei2c);
@@ -814,11 +859,47 @@ void DRV2605Linit(SoftwareI2C _wirei2c, SFE_HMD_DRV2605L MOTOR, DRV2605LPara Par
   MOTOR.cntrl1(Para.cntrl1, _wirei2c);
   MOTOR.cntrl2(Para.cntrl2, _wirei2c);
   MOTOR.cntrl3(Para.cntrl3, _wirei2c);
-  if(Para.OLP)
+  MOTOR.Mode(0x07, _wirei2c);
+  MOTOR.cntrl4(Para.cntrl4, _wirei2c);
+  if (Para.OLP)
     MOTOR.OLP(Para.OLP, _wirei2c);
-  MOTOR.Mode(mode, _wirei2c);
-  MOTOR.Library(lib, _wirei2c);
+  MOTOR.go(_wirei2c);
 }
+
+bool DRV2605LAcalVerify(SoftwareI2C _wirei2c, SFE_HMD_DRV2605L MOTOR, byte Mode, byte Lib, String Name)
+{
+  if (!MOTOR.readDRV2605L(GO_REG, _wirei2c))
+  {
+    uint8_t status = LRA_Y.readDRV2605L(STATUS_REG, _wirei2c);
+    bool isCompleted = bitRead(status, 3);
+    if (isCompleted)
+    {
+      DEBUG_PRINT(Name);
+      DEBUG_PRINT(" Auto-calibration Completed");
+      uint8_t ACalComp = MOTOR.readDRV2605L(COMPRESULT_REG, _wirei2c);
+      uint8_t ACalBEMF = MOTOR.readDRV2605L(BACKEMF_REG, _wirei2c);
+      uint8_t BEMFGain = MOTOR.readDRV2605L(FEEDBACK_REG, _wirei2c);
+      DEBUG_PRINT(" | ");
+      DEBUG_PRINT("status:");
+      DEBUG_PRINTHEX(status);
+      DEBUG_PRINT(" | ");
+      DEBUG_PRINT("ACalComp:");
+      DEBUG_PRINTHEX(ACalComp);
+      DEBUG_PRINT(" | ");
+      DEBUG_PRINT("ACalBEMF:");
+      DEBUG_PRINTHEX(ACalBEMF);
+      DEBUG_PRINT(" | ");
+      DEBUG_PRINT("BEMFGain:");
+      DEBUG_PRINTHEX(BEMFGain);
+      DEBUG_PRINT("\n");
+      MOTOR.Mode(Mode, _wirei2c);
+      MOTOR.Library(Lib, _wirei2c);
+    }
+    return isCompleted;
+  }
+  return false;
+}
+
 
 // }
 
@@ -853,7 +934,7 @@ void WDTinit(uint8_t wdt)
 
 void NavTagSort(NavTag array[], uint8_t arrayLen)
 {
-  Serial.println("****NavTagArray Sort****");
+  DEBUG_PRINTLN("****NavTagArray Sort****");
   for (int i = 0; i < arrayLen; i++)
   {
     for (int j = i + 1; j < arrayLen; j++)
@@ -870,39 +951,41 @@ void NavTagSort(NavTag array[], uint8_t arrayLen)
       }
     }
   }
+#ifdef DEBUG
   for (int x = 0; x < arrayLen; x++)
   {
     NavTag tagCopy;
-    memcpy(&tagCopy, &array[x], sizeof(array[x]));
-    Serial.print(x);
-    Serial.print("|");
-    Serial.print("NavTag:");
-    Serial.print(" PC:");
-    Serial.print(tagCopy.PC[0], HEX);
-    Serial.print(" ");
-    Serial.print(tagCopy.PC[1], HEX);
-    Serial.print(" CRC:");
-    Serial.print(tagCopy.CRC[0], HEX);
-    Serial.print(" ");
-    Serial.print(tagCopy.CRC[1], HEX);
-    Serial.print(" Hazard:");
-    Serial.print(tagCopy.Hazard[0], HEX);
-    Serial.print(" ");
-    Serial.print(tagCopy.Hazard[1], HEX);
-    Serial.print(" ");
-    Serial.print(tagCopy.Hazard[2], HEX);
-    Serial.print(" ");
-    Serial.print(tagCopy.Hazard[3], HEX);
-    Serial.print(" ");
-    Serial.print(" RSSI:");
-    Serial.print(tagCopy.RSSI - 130);
-    Serial.print("\n");
+    memcpy(&tagCopy, &array[1], sizeof(array[x]));
+    DEBUG_PRINT(x);
+    DEBUG_PRINT("|");
+    DEBUG_PRINT("NavTag:");
+    DEBUG_PRINT(" PC:");
+    DEBUG_PRINTHEX(tagCopy.PC[0]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINTHEX(tagCopy.PC[1]);
+    DEBUG_PRINT(" CRC:");
+    DEBUG_PRINTHEX(tagCopy.CRC[0]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINTHEX(tagCopy.CRC[1]);
+    DEBUG_PRINT(" Hazard:");
+    DEBUG_PRINTHEX(tagCopy.Hazard[0]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINTHEX(tagCopy.Hazard[1]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINTHEX(tagCopy.Hazard[2]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINTHEX(tagCopy.Hazard[3]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINT(" RSSI:");
+    DEBUG_PRINT(tagCopy.RSSI - 130);
+    DEBUG_PRINT("\n");
   }
+#endif
 }
 
 void geoPosSort(geoPos array[], uint8_t arrayLen)
 {
-  Serial.println("****geoPosSort Sort****");
+  DEBUG_PRINTLN("****geoPosSort Sort****");
   for (int i = 0; i < arrayLen; i++)
   {
     for (int j = i + 1; j < arrayLen; j++)
@@ -919,53 +1002,67 @@ void geoPosSort(geoPos array[], uint8_t arrayLen)
       }
     }
   }
+  if (isBLEconnected)
+  {
+    geoPos tagCopy;
+    memcpy(&tagCopy, &array[0], sizeof(array[0]));
+    byte Pos[13] = {};
+    memcpy(Pos, tagCopy.Floor, 2 * sizeof(byte));
+    memcpy(Pos + 2, tagCopy.Information, 3 * sizeof(byte));
+    memcpy(Pos + 2 + 3, tagCopy.Lag, 4 * sizeof(byte));
+    memcpy(Pos + 2 + 3 + 4, tagCopy.Long, 4 * sizeof(byte));
+    PositionChar.writeValue(Pos, 13);
+  }
+
+#ifdef DEBUG
   for (int x = 0; x < arrayLen; x++)
   {
     geoPos tagCopy;
     memcpy(&tagCopy, &array[x], sizeof(array[x]));
-    Serial.print(x);
-    Serial.print("|");
-    Serial.print("geoPos:");
-    Serial.print(" PC:");
-    Serial.print(tagCopy.PC[0], HEX);
-    Serial.print(" ");
-    Serial.print(tagCopy.PC[1], HEX);
-    Serial.print(" CRC:");
-    Serial.print(tagCopy.CRC[0], HEX);
-    Serial.print(" ");
-    Serial.print(tagCopy.CRC[1], HEX);
-    Serial.print(" Floor:");
-    Serial.print(tagCopy.Floor[0], HEX);
-    Serial.print(" ");
-    Serial.print(tagCopy.Floor[1], HEX);
-    Serial.print(" ");
-    Serial.print(" Information:");
-    Serial.print(tagCopy.Information[0], HEX);
-    Serial.print(" ");
-    Serial.print(tagCopy.Information[1], HEX);
-    Serial.print(" ");
-    Serial.print(tagCopy.Information[2], HEX);
-    Serial.print(" ");
-    Serial.print(" Lag:");
-    Serial.print(tagCopy.Lag[0], HEX);
-    Serial.print(" ");
-    Serial.print(tagCopy.Lag[1], HEX);
-    Serial.print(" ");
-    Serial.print(tagCopy.Lag[2], HEX);
-    Serial.print(" ");
-    Serial.print(tagCopy.Lag[3], HEX);
-    Serial.print(" ");
-    Serial.print(" Long:");
-    Serial.print(tagCopy.Long[0], HEX);
-    Serial.print(" ");
-    Serial.print(tagCopy.Long[1], HEX);
-    Serial.print(" ");
-    Serial.print(tagCopy.Long[2], HEX);
-    Serial.print(" ");
-    Serial.print(tagCopy.Long[3], HEX);
-    Serial.print(" ");
-    Serial.print(" RSSI:");
-    Serial.print(tagCopy.RSSI - 130);
-    Serial.print("\n");
+    DEBUG_PRINT(x);
+    DEBUG_PRINT("|");
+    DEBUG_PRINT("geoPos:");
+    DEBUG_PRINT(" PC:");
+    DEBUG_PRINTHEX(tagCopy.PC[0]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINTHEX(tagCopy.PC[1]);
+    DEBUG_PRINT(" CRC:");
+    DEBUG_PRINTHEX(tagCopy.CRC[0]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINTHEX(tagCopy.CRC[1]);
+    DEBUG_PRINT(" Floor:");
+    DEBUG_PRINTHEX(tagCopy.Floor[0]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINTHEX(tagCopy.Floor[1]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINT(" Information:");
+    DEBUG_PRINTHEX(tagCopy.Information[0]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINTHEX(tagCopy.Information[1]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINTHEX(tagCopy.Information[2]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINT(" Lag:");
+    DEBUG_PRINTHEX(tagCopy.Lag[0]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINTHEX(tagCopy.Lag[1]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINTHEX(tagCopy.Lag[2]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINTHEX(tagCopy.Lag[3]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINT(" Long:");
+    DEBUG_PRINTHEX(tagCopy.Long[0]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINTHEX(tagCopy.Long[1]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINTHEX(tagCopy.Long[2]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINTHEX(tagCopy.Long[3]);
+    DEBUG_PRINT(" ");
+    DEBUG_PRINT(" RSSI:");
+    DEBUG_PRINT(tagCopy.RSSI - 130);
+    DEBUG_PRINT("\n");
   }
+#endif
 }
