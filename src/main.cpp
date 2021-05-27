@@ -49,11 +49,11 @@ typedef struct
   byte RSSI;
 } geoPos;
 
-typedef struct
-{
-  byte RTP;
-  uint8_t interval;
-} LRAMove;
+// typedef struct
+// {
+//   byte RTP;
+//   uint8_t interval;
+// } LRAMove;
 
 typedef struct
 {
@@ -81,17 +81,17 @@ DRV2605LPara LRAY_3VCL = {0xB6, 0x59, 0xA0, 0x9A, 0xF5, 0x80, 0x20, 0x3F};
 
 DRV2605LPara LRAX_3VCL = {0xB6, 0x58, 0xA0, 0x97, 0xF5, 0x80, 0x20, 0x3A};
 
-LRAMove Forward[] = {
-    {0xFF, 10},
-    {0x00, 1},
-    {0x7F, 200},
-    {0xFF, 20},
-    {0x00, 5},
-    {0x7F, 200},
-    {0xFF, 40},
-    {0x00, 5},
-    {0x7F, 200},
-};
+// LRAMove Forward[] = {
+//     {0xFF, 10},
+//     {0x00, 1},
+//     {0x7F, 200},
+//     {0xFF, 20},
+//     {0x00, 5},
+//     {0x7F, 200},
+//     {0xFF, 40},
+//     {0x00, 5},
+//     {0x7F, 200},
+// };
 
 // LRA Declaration
 SFE_HMD_DRV2605L LRA_Y;
@@ -126,7 +126,7 @@ bool isBLEconnected = false;
 bool isNavOrSetBLE = false;
 
 bool flagNav = false;
-bool flagLRM = false;
+bool flagVib = false;
 bool flagLRMBLE = false;
 bool firstFlush = false;
 bool flagFlush = false;
@@ -150,6 +150,8 @@ uint8_t LRMCounter = 0;
 uint8_t tagsCounter = 0;
 uint8_t FlushCounter = 0;
 uint8_t RoutineCounter = 0;
+uint8_t VibMode = 0;
+uint8_t VibCounter = 0;
 
 byte length = 0;
 byte from_BLE[60] = {};
@@ -157,12 +159,14 @@ byte motor_BLE[2] = {};
 byte FeedBack[300] = {};
 NavTag NavTags[10] = {};
 geoPos Pos[10] = {};
+byte PreviousPos[21] = {};
 
 // Millis timer
 unsigned long previousMillis_firstFlush = 0;
 
 unsigned long currentMillis = 0;
-unsigned long previousMillis_LRA = 0;
+unsigned long previousMillis_LRAX = 0;
+unsigned long previousMillis_LRAY = 0;
 unsigned long previousMillis_Flush = 0;
 unsigned long previousMillis_NoData = 0;
 unsigned long previousMillis_Forward = 0;
@@ -186,7 +190,7 @@ BLEService INDNAV_BLE(service_uuid);
 BLECharacteristic toReaderChar(toReaderChar_uuid, BLEWrite | BLEWriteWithoutResponse, 60);
 BLECharacteristic fromReaderChar(fromReaderChar_uuid, BLERead | BLENotify, 400);
 BLECharacteristic PositionChar(PositionChar_uuid, BLERead | BLENotify, 21);
-BLECharacteristic motorChar(motorChar_uuid, BLEWrite | BLEWriteWithoutResponse, 2);
+BLEByteCharacteristic motorChar(motorChar_uuid, BLEWrite | BLEWriteWithoutResponse);
 BLEByteCharacteristic isNavOrSetChar(isNavOrSetChar_uuid, BLEWrite | BLEWriteWithoutResponse);
 
 // BLEService Battery(battery_levelSer_uuid);
@@ -209,8 +213,9 @@ byte checksum(byte buffer[], uint8_t buffer_len);
 void NavTagSort(NavTag array[], uint8_t arrayLen);
 void geoPosSort(geoPos array[], uint8_t arrayLen);
 void DRV2605Linit(SoftwareI2C _wirei2c, SFE_HMD_DRV2605L MOTOR, DRV2605LPara Para);
-void DRV2605Move(uint8_t channel, LRAMove Action[]);
 bool DRV2605LAcalVerify(SoftwareI2C _wirei2c, SFE_HMD_DRV2605L MOTOR, byte Mode, byte Lib, String Name);
+void DRV2605Move(SoftwareI2C _wirei2c, SFE_HMD_DRV2605L MOTOR, uint8_t wav);
+void Vibration(uint8_t MovingMode);
 
 void setup()
 {
@@ -256,7 +261,7 @@ void setup()
   _iic.begin();
   // DRV2605Linit(_ic, LRA_Y, LRA_3VOL, 0x05, 0x01);
   // DRV2605Linit(_iic, LRA_X, LRA_3VOL, 0x05, 0x01);
-  DRV2605Linit(_ic, LRA_Y, LRAY_3VCL);
+  DRV2605Linit(_ic, LRA_Y, LRAX_3VCL);
   DRV2605Linit(_iic, LRA_X, LRAX_3VCL);
 }
 
@@ -320,6 +325,16 @@ void loop()
       }
       if (motorChar.written())
       {
+        int motorValue = motorChar.value();
+        VibMode = motorValue % 10;
+        VibCounter = motorValue / 10;
+        flagVib = true;
+        // DEBUG_PRINT("Value: ");
+        // DEBUG_PRINT(motorValue);
+        // DEBUG_PRINT("\tMode: ");
+        // DEBUG_PRINT(VibMode);
+        // DEBUG_PRINT("\tTimes: ");
+        // DEBUG_PRINTLN(VibCounter);
       }
       if (isNavOrSetBLE)
         sendnreveice(from_BLE, length);
@@ -334,6 +349,8 @@ void loop()
     scanRoutine();
   if (!flagFlush)
     triggerReadbyte();
+  if (flagVib)
+    Vibration(VibMode);
   // if (currentMillis - previousMillis_LRA > 1000)
   // {
   //   // LRA_Y.stop(_iic);
@@ -608,9 +625,9 @@ void ReadFeedBack()
     if (FeedBack[0] == (byte)0xA0 && FeedBack[2] == (byte)0xFE)
     {
       if (FeedBack[1] > 4 && FeedBack[3] == (byte)0x80)
-        {
-          tagsCounter = FeedBack[6];
-        }
+      {
+        tagsCounter = FeedBack[6];
+      }
       //   flagData2BLE = true;
       if (!flagRoutine)
       {
@@ -886,6 +903,7 @@ bool DRV2605LAcalVerify(SoftwareI2C _wirei2c, SFE_HMD_DRV2605L MOTOR, byte Mode,
     bool isCompleted = bitRead(status, 3);
     if (isCompleted)
     {
+#ifdef DEBUG
       DEBUG_PRINT(Name);
       DEBUG_PRINT(" Auto-calibration Completed");
       uint8_t ACalComp = MOTOR.readDRV2605L(COMPRESULT_REG, _wirei2c);
@@ -904,6 +922,7 @@ bool DRV2605LAcalVerify(SoftwareI2C _wirei2c, SFE_HMD_DRV2605L MOTOR, byte Mode,
       DEBUG_PRINT("BEMFGain:");
       DEBUG_PRINTHEX(BEMFGain);
       DEBUG_PRINT("\n");
+#endif // DEBUG
       MOTOR.Mode(Mode, _wirei2c);
       MOTOR.Library(Lib, _wirei2c);
     }
@@ -912,28 +931,104 @@ bool DRV2605LAcalVerify(SoftwareI2C _wirei2c, SFE_HMD_DRV2605L MOTOR, byte Mode,
   return false;
 }
 
-// }
+void DRV2605Move(SoftwareI2C _wirei2c, SFE_HMD_DRV2605L MOTOR, uint8_t wav)
+{
+  MOTOR.Waveform(0, wav, _wirei2c);
+  MOTOR.Waveform(1, 0, _wirei2c);
+  MOTOR.go(_wirei2c);
+}
 
-// void DRV2605Move(uint8_t channel, LRAMove Action[])
-// {
-//   tcaselect(channel);
-//   if (currentMillis - previousMillis_LRM >= Action[LRMCounter].interval)
-//   {
-//     if (!channel)
-//       YLRA.RTP(Action[LRMCounter].RTP);
-//     else
-//       XLRA.RTP(Action[LRMCounter].RTP);
-//     LRMCounter += 1;
-//   }
-//   if (LRMCounter > sizeof(Action) / sizeof(Action[0]))
-//   {
-//     LRMCounter = 0;
-//     if (flagLRM)
-//       flagLRM = false;
-//     if (flagLRMBLE)
-//       flagLRMBLE = false;
-//   }
-// }
+void Vibration(uint8_t MovingMode)
+{
+  if (VibCounter)
+  {
+    switch (MovingMode) // 0 Forward, 1 Leftward, 2 Rightward, 3 Backward, 4 Crossroad, 5 Enterance, 6 Stair
+    {
+    case 0:
+      if (currentMillis - previousMillis_LRAY > 100)
+      {
+        // DEBUG_PRINT("Vib 0");
+        // DEBUG_PRINT("\tTimes:");
+        // DEBUG_PRINTLN(VibCounter);
+        DRV2605Move(_iic, LRA_Y, 89);
+        VibCounter += -1;
+        previousMillis_LRAY = currentMillis;
+      }
+      break;
+    case 1:
+      if (currentMillis - previousMillis_LRAX > 100)
+      {
+        // DEBUG_PRINT("Vib 1");
+        // DEBUG_PRINT("\tTimes:");
+        // DEBUG_PRINT(VibCounter);
+        DRV2605Move(_ic, LRA_X, 89);
+        VibCounter -= 1;
+        previousMillis_LRAX = currentMillis;
+      }
+      break;
+    case 2:
+      if (currentMillis - previousMillis_LRAX > 100)
+      {
+        DRV2605Move(_ic, LRA_X, 64);
+        VibCounter -= 1;
+        previousMillis_LRAX = currentMillis;
+      }
+      break;
+    case 3:
+      if (currentMillis - previousMillis_LRAY > 100)
+      {
+        DRV2605Move(_ic, LRA_Y, 64);
+        VibCounter -= 1;
+        previousMillis_LRAY = currentMillis;
+      }
+      break;
+    case 4:
+      if (currentMillis - previousMillis_LRAY > 200)
+      {
+        DRV2605Move(_iic, LRA_Y, 89);
+        VibCounter -= 1;
+        previousMillis_LRAY = currentMillis;
+      }
+      if (currentMillis - previousMillis_LRAX > 100)
+      {
+        DRV2605Move(_ic, LRA_X, 89);
+        VibCounter -= 1;
+        previousMillis_LRAX = currentMillis;
+      }
+      break;
+    case 5:
+      if (currentMillis - previousMillis_LRAX > 100)
+      {
+        DRV2605Move(_ic, LRA_X, 77);
+        VibCounter -= 1;
+        previousMillis_LRAX = currentMillis;
+      }
+      break;
+    case 6:
+      if (currentMillis - previousMillis_LRAY > 100)
+      {
+        DRV2605Move(_iic, LRA_Y, 77);
+        VibCounter -= 1;
+        previousMillis_LRAY = currentMillis;
+      }
+      break;
+    default:
+      LRA_Y.stop(_iic);
+      LRA_X.stop(_ic);
+      VibCounter = 0;
+      flagVib = false;
+      break;
+    }
+  }
+  else
+  {
+    VibCounter = 0;
+    LRA_Y.stop(_iic);
+    LRA_X.stop(_ic);
+    flagVib = false;
+    // flagVibBLE = false;
+  }
+}
 
 void WDTinit(uint8_t wdt)
 {
@@ -948,6 +1043,33 @@ void NavTagSort(NavTag array[], uint8_t arrayLen)
   DEBUG_PRINTLN("****NavTagArray Sort****");
   for (int i = 0; i < arrayLen; i++)
   {
+    if (!isNavOrSetBLE && !flagVib)
+  {
+    NavTag tagCopy;
+    memcpy(&tagCopy, &array[i], sizeof(array[i]));
+    switch (tagCopy.Hazard[0])
+    {
+    case 0:
+      VibMode = 6;
+      VibCounter = 4;
+      break;
+    case 1:
+      VibMode = 5;
+      VibCounter = 2;
+      break;
+    case 2:
+      VibMode = 6;
+      VibCounter = 2;
+      break;
+    case 3:
+      VibMode = 4;
+      VibCounter = 2;
+      break;
+    default:
+      break;
+    }
+    flagVib = true;
+  }
     for (int j = i + 1; j < arrayLen; j++)
     {
       if (array[i].RSSI != 0 && array[j].RSSI != 0)
@@ -962,6 +1084,33 @@ void NavTagSort(NavTag array[], uint8_t arrayLen)
       }
     }
   }
+  // if (!isNavOrSetBLE && !flagVib)
+  // {
+  //   NavTag tagCopy;
+  //   memcpy(&tagCopy, &array[0], sizeof(array[0]));
+  //   switch (tagCopy.Hazard[0])
+  //   {
+  //   case 0:
+  //     VibMode = 6;
+  //     VibCounter = 4;
+  //     break;
+  //   case 1:
+  //     VibMode = 5;
+  //     VibCounter = 2;
+  //     break;
+  //   case 2:
+  //     VibMode = 6;
+  //     VibCounter = 2;
+  //     break;
+  //   case 3:
+  //     VibMode = 4;
+  //     VibCounter = 2;
+  //     break;
+  //   default:
+  //     break;
+  //   }
+  //   flagVib = true;
+  // }
 #ifdef DEBUG
   for (int x = 0; x < arrayLen; x++)
   {
@@ -1018,13 +1167,21 @@ void geoPosSort(geoPos array[], uint8_t arrayLen)
     geoPos tagCopy;
     memcpy(&tagCopy, &array[0], sizeof(array[0]));
     byte Pos[21] = {};
+    // byte Zore[21] = {};
     memcpy(Pos, tagCopy.Floor, 2 * sizeof(byte));
     memcpy(Pos + 2, tagCopy.Information, 3 * sizeof(byte));
     memcpy(Pos + 2 + 3, tagCopy.X, 4 * sizeof(byte));
     memcpy(Pos + 2 + 3 + 4, tagCopy.Y, 4 * sizeof(byte));
     memcpy(Pos + 2 + 3 + 4 + 4, tagCopy.Lag, 4 * sizeof(byte));
     memcpy(Pos + 2 + 3 + 4 + 4 + 4, tagCopy.Long, 4 * sizeof(byte));
-    PositionChar.writeValue(Pos, 21);
+    // if PreviousPos != Pos && PreviousPos
+    // int PosCompared = memcmp(Pos, PreviousPos, 21 * sizeof(byte));
+    // uint8_t isPreviousPosZero memcmp(PreviousPos, Zore, size_t 21 * sizeof(byte));
+    // if (PosCompared != 0)
+    // {
+      PositionChar.writeValue(Pos, 21);
+      // memcpy(PreviousPos, Pos, 21 * sizeof(byte));
+    // }
   }
 
 #ifdef DEBUG
